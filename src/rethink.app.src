@@ -1,0 +1,16 @@
+{application, rethink,
+ [
+  {description, "An Erlang rethink library"},
+  {vsn, "1"},
+  {modules, [
+                rethink
+            ]},
+  {mod, {rethink_app, []}},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  jsx
+                 ]},
+  {env, []}
+ ]}.

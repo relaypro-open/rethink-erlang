@@ -1,0 +1,4 @@
+rebar.lock
+_build
+*.swp
+rethinkdb_data
