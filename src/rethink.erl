@@ -58,12 +58,20 @@ counter(Name, Incr, Threshold, SetValue, Default) ->
     UpdateOp = {2, Incr, Threshold, SetValue},
     ets:update_counter(rethink_counters, Name, UpdateOp, {Name, Default}).
 
-parse_error(Err={error,{runtime_error, RuntimeError}}) ->
-    case re:run(RuntimeError, <<"already exists">>, [{capture, none}]) of
-        match ->
-            {error, {already_exists, RuntimeError}};
-        nomatch ->
-            Err
-    end;
 parse_error(Err) ->
-    Err.
+    RegExps = [#{re => <<"already exists">>,
+                  reason => already_exists},
+               #{re => <<"Table .* does not exist">>,
+                 reason => table_does_not_exist}],
+    parse_error_regexps(Err, RegExps).
+
+parse_error_regexps(Err, []) ->
+    Err;
+parse_error_regexps(Err={error,{runtime_error, RuntimeError}}, [#{re := RE,
+                                                                  reason := Reason}|Regexps]) ->
+    case re:run(RuntimeError, RE, [{capture, none}]) of
+        match ->
+            {error, {Reason, RuntimeError}};
+        nomatch ->
+            parse_error_regexps(Err, Regexps)
+    end.
