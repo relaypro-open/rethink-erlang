@@ -440,12 +440,7 @@ register_receiver(Type, Token, From, Timeout, State=#{receivers := Receivers}) -
         infinity ->
             undefined;
         _ ->
-            case timer:send_after(Timeout, {receiver_timeout, Token}) of
-                {ok, T} ->
-                    T;
-                _ ->
-                    undefined
-            end
+            erlang:send_after(Timeout, self(), {receiver_timeout, Token})
     end,
     State#{receivers => Receivers#{ Token => {Type, From, Timeout, TRef} }}.
 
@@ -466,7 +461,7 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
     %io:format("notify ~p ~p ~p~n", [Token, Resp, Receivers]),
     UpdatedReceiver = case maps:find(Token, Receivers) of
         {ok, {run, From, Timeout, TRef}} ->
-            timer:cancel(TRef),
+            erlang:cancel_timer(TRef),
             UpdatedReceiver_0 = {run, From, Timeout, undefined},
             {Reply, UpdatedReceiver_1} = case expect_query_response(Resp) of
                 {ok, _FullResp=#{<<"t">> := ResponseType,
@@ -501,7 +496,7 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
             gen_server:reply(From, Reply),
             UpdatedReceiver_1;
         {ok, {cursor, Cursor, Timeout, TRef}} ->
-            timer:cancel(TRef),
+            erlang:cancel_timer(TRef),
             UpdatedReceiver_0 = {cursor, Cursor, Timeout, undefined},
             case expect_query_response(Resp) of
                 {ok, #{<<"t">> := ResponseType,
