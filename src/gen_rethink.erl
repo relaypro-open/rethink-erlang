@@ -306,8 +306,8 @@ handle_info({tcp_passsive, Socket}, State=#{socket := Socket}) ->
     {noreply, State};
 handle_info({tcp_error, Socket, Reason}, State=#{socket := Socket}) ->
     {stop, Reason, State};
-handle_info({receiver_timeout, Token}, State) ->
-    State2 = timeout_receiver(Token, State),
+handle_info({receiver_timeout, Token, TimeoutRef}, State) ->
+    State2 = timeout_receiver(Token, TimeoutRef, State),
     {noreply, State2};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -440,28 +440,37 @@ register_receiver(Type, Token, From, Timeout, State=#{receivers := Receivers}) -
         infinity ->
             undefined;
         _ ->
-            erlang:send_after(Timeout, self(), {receiver_timeout, Token})
+            % We send a unique ref with the timeout event because the token
+            % can be reused, and if this timer event fails to be canceled, it
+            % would potentially cancel a future request.
+            TimeoutRef = make_ref(),
+            CancelRef = erlang:send_after(Timeout, self(),
+                                          {receiver_timeout, Token, TimeoutRef}),
+            {TimeoutRef, CancelRef}
     end,
     State#{receivers => Receivers#{ Token => {Type, From, Timeout, TRef} }}.
 
-timeout_receiver(Token, State=#{receivers := Receivers}) ->
+timeout_receiver(Token, TimeoutRef, State=#{receivers := Receivers}) ->
     TimeoutError = {error, timeout},
     case maps:find(Token, Receivers) of
-        {ok, {run, From, _Timeout, _TRef}} ->
+        {ok, {run, From, _Timeout, {TimeoutRef, _}}} ->
             gen_server:reply(From, TimeoutError),
             State#{receivers => maps:remove(Token, Receivers)};
-        {ok, {cursor, Cursor, _Timeout, _TRef}} ->
+        {ok, {cursor, Cursor, _Timeout, {TimeoutRef, _}}} ->
             rethink_cursor:update_error(Cursor, TimeoutError),
             State#{receivers => maps:remove(Token, Receivers)};
         _ ->
             State
     end.
 
+cancel_timer({_, CancelRef}) -> erlang:cancel_timer(CancelRef);
+cancel_timer(_) -> ok.
+
 notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
     %io:format("notify ~p ~p ~p~n", [Token, Resp, Receivers]),
     UpdatedReceiver = case maps:find(Token, Receivers) of
         {ok, {run, From, Timeout, TRef}} ->
-            erlang:cancel_timer(TRef),
+            cancel_timer(TRef),
             UpdatedReceiver_0 = {run, From, Timeout, undefined},
             {Reply, UpdatedReceiver_1} = case expect_query_response(Resp) of
                 {ok, _FullResp=#{<<"t">> := ResponseType,
@@ -496,7 +505,7 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
             gen_server:reply(From, Reply),
             UpdatedReceiver_1;
         {ok, {cursor, Cursor, Timeout, TRef}} ->
-            erlang:cancel_timer(TRef),
+            cancel_timer(TRef),
             UpdatedReceiver_0 = {cursor, Cursor, Timeout, undefined},
             case expect_query_response(Resp) of
                 {ok, #{<<"t">> := ResponseType,
