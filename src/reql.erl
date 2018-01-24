@@ -9,7 +9,7 @@
 %% ------------------------------------------------------------------
 
 % Accessing ReQL
--export([x/1, new/0, new/1, var/1, apply/2, closure/2, changes/1, changes/2]).
+-export([x/1, new/0, new/1, var/1, apply/2, closure/2, closure/3, changes/1, changes/2]).
 
 % Manipulating databases
 -export([db_create/2, db_drop/2, db_list/1]).
@@ -433,9 +433,13 @@ wire_raw(R) ->
     rethink:encode(prepare_query(Q)).
 
 closure(R, Cmd) ->
+    closure(R, Cmd, #{}).
+
+closure(R, Cmd, Opts) ->
     StartRaw = rethink:encode(ql2:query_type(wire, start)),
     CmdRaw = rethink:encode(ql2:term_type(wire, Cmd)),
     EmptyOptsRaw = rethink:encode(#{}),
+    CmdOptsRaw = rethink:encode(Opts),
     Inner = wire_raw(R),
     FirstPart = iolist_to_binary([
              <<"[">>,
@@ -450,7 +454,7 @@ closure(R, Cmd) ->
                 ]),
     LastPart = iolist_to_binary([ <<"]">>,
                     <<",">>,
-                    EmptyOptsRaw, % insert opts
+                    CmdOptsRaw, % command opts
                 <<"]">>,
              <<",">>,
              EmptyOptsRaw, % query start opts

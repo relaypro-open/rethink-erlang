@@ -14,8 +14,7 @@
          run/3,
          insert_raw/4,
          insert_raw/5,
-         run_with_args/3,
-         run_with_args/4,
+         run_closure/4,
          feed_cursor/3,
          close/1]).
 
@@ -102,19 +101,16 @@ run(Re, Reql, Timeout) ->
     gen_server:call(Re, {run, #{reql => Reql,
                                 timeout => Timeout}}, ?CallTimeout).
 
-run_with_args(Re, ReqlClosure, X) when is_function(ReqlClosure) ->
-    run_with_args(Re, ReqlClosure, X, ?RethinkTimeout).
-
 % {ok, C} = gen_rethink:connect().
 % R = reql:new([{db, test}, {table, test}]).
 % Inserter = reql:closure(RC, insert).
 % gen_rethink:run_with_args(C, Inserter, #{name => an_object}, 1000).
 % gen_rethink:run_with_args(C, Inserter, #{name => an_object2}, 1000).
 % ...
-run_with_args(Re, ReqlClosure, X, Timeout) when is_function(ReqlClosure) ->
-    gen_server:call(Re, {run_with_args, #{reql => ReqlClosure,
-                                          args => [X],
-                                          timeout => Timeout}}, ?CallTimeout).
+run_closure(Re, ReqlClosure, Args, Timeout) when is_function(ReqlClosure) ->
+    gen_server:call(Re, {run_closure, #{reql => ReqlClosure,
+                                        args => Args,
+                                        timeout => Timeout}}, ?CallTimeout).
 
 
 insert_raw(Re, Db, Table, Json) when is_binary(Json) ->
@@ -270,12 +266,11 @@ handle_call({insert_raw, #{db := Db,
     Packet = [TokenBin, SizeBin, QueryIoList],
     ok = send_query(Socket, Packet),
     {noreply, register_receiver(run, TokenBin, From, Timeout, State2)};
-handle_call({run_with_args, #{reql := ReqlClosure,
-                              args := [X],
+handle_call({run_closure, #{reql := ReqlClosure,
+                              args := Args,
                               timeout := Timeout}}, From, State=#{socket := Socket}) ->
     {Token, State2} = next_token(State),
-
-    Query = ReqlClosure(X),
+    Query = erlang:apply(ReqlClosure, Args),
     Size = iolist_size(Query),
 
     TokenBin = encode_unsigned(Token, 8, big),

@@ -27,7 +27,7 @@ rebar3 shell
 Connecting to a RethinkDB instance
 ----------------------------------
 ```
-{ok, Connection} = gen_rethink:connect("localhost", 28015).
+{ok, Connection} = gen_rethink:connect(#{host => "localhost", port => 28015}).
 ```
 or
 ```
@@ -118,11 +118,8 @@ end(Cursor).
 
 Implementing changefeeds
 ------------------------
-The `gen_requery` behaviour can be used to manage a long-living changefeed query. Please
-keep in mind that you are responsible for managing the connection when using this
-module. You may want to create a process monitor on the connection so that
-the query can be restarted if the connection drops. See test/gen_requery_tests.erl
-for an example.
+The `gen_requery` behaviour can be used to manage a long-living changefeed query. 
+See test/gen_requery_tests.erl for an example.
 
 RethinkDB datatypes
 -------------------
@@ -146,12 +143,12 @@ Reql = reql:x(fun(X) ->
             reql:db(X, my_db),
             reql:table(X, my_table)
         end),
-Inserter = reql:closure(Reql, insert),
+Inserter = reql:closure(Reql, insert, #{return_changes => true}),
 % Reql process is now stopped
-gen_rethink:run_with_args(Connection, Inserter,
-        #{a => 1, x => <<"hello">>, y => <<"world">>}),
-gen_rethink:run_with_args(Connection, Inserter,
-        #{a => 2, x => <<"hello">>, y => <<"rethinkdb">>}).
+gen_rethink:run_closure(Connection, Inserter,
+        [#{a => 1, x => <<"hello">>, y => <<"world">>}], 5000),
+gen_rethink:run_closure(Connection, Inserter,
+        [#{a => 2, x => <<"hello">>, y => <<"rethinkdb">>}], 5000).
 ```
 
 Full example

@@ -84,6 +84,26 @@ reql_test_() ->
                                              reql:javascript(X, <<"while(true) {}">>,
                                                              #{timeout => 1.3})
                                      end, 100)
+              end,
+
+              % Closure test
+              fun() ->
+                      Reql = reql:db(temp_db),
+                      reql:table(Reql, my_table),
+                      Inserter = reql:closure(Reql, insert, #{return_changes => true}),
+                      {ok, C} = gen_rethink:connect(),
+                      {ok, #{<<"changes">> := [_|_]}} =
+                        gen_rethink:run_closure(C, Inserter,
+                               [#{name => <<"closureitem">>}], timer:minutes(5)),
+                      gen_rethink:close(C)
+              end,
+
+              % Raw insert test
+              fun() ->
+                      {ok, C} = gen_rethink:connect(),
+                      {ok, _} = gen_rethink:insert_raw(C, <<"temp_db">>, <<"my_table">>,
+                                <<"{\"name\":\"insertrawitem\"}">>, timer:minutes(5)),
+                      gen_rethink:close(C)
               end
 
              ]
