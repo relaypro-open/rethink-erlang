@@ -74,4 +74,6 @@ parse_error_regexps(Err={error,{runtime_error, RuntimeError}}, [#{re := RE,
             {error, {Reason, RuntimeError}};
         nomatch ->
             parse_error_regexps(Err, Regexps)
-    end.
+    end;
+parse_error_regexps(Err, _) ->
+    Err.
