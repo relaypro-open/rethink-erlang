@@ -86,6 +86,8 @@ handle_call({activate, Pid}, _From, State=#{receiver := undefined}) ->
     end;
 handle_call({deactivate}, _From, State) ->
     {reply, ok, State#{receiver => undefined}};
+handle_call({flush}, _From, State=#{waiting_feed := true, results := Results}) ->
+    {reply, {ok, Results}, State#{results => []}};
 handle_call({flush}, From, State=#{last_response_type := LastResponseType,
                                     results := Results}) ->
     State2 = feed(State),

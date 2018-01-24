@@ -1,18 +1,29 @@
 -module(gen_requery).
 -behaviour(gen_server).
 
--export([start_link/3, start_link/4, start/3, start/4, run/3, run/4]).
+-export([start_link/3, start_link/4, start/3, start/4, call/3, cast/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
+-define(ReconnectWait, 200).
+-define(ReconnectMax, 60000).
+-define(ReqlTimeout, infinity).
+
 -type(state() :: any()).
--type(reql() :: pid()).
+-type(reql() :: pid() | undefined).
 
 -callback init(Args :: list()) ->
-    {ok, Reql ::  reql(), State :: state()} |
+    {ok, ConnectOptions ::  map(), State :: state()} |
     {stop, Reason :: any()} |
     ignore.
+-callback handle_connection_up(Connection :: pid(), State :: state()) ->
+    {noreply, Reql :: reql(), NewState :: state()} |
+    {noreply, NewState :: state()} |
+    {stop, Reason :: any(), NewState :: state()}.
+-callback handle_connection_down(State :: state()) ->
+    {noreply, NewState :: state()} |
+    {stop, Reason :: any(), NewState :: state()}.
 -callback handle_query_done(State :: state()) -> 
     {noreply, NewState :: state()} |
     {stop, Reason :: any(), NewState :: state()}.
@@ -50,18 +61,20 @@ start(Module, Args, Options) ->
 start(ServerName, Module, Args, Options) ->
     gen_server:start(ServerName, ?MODULE, [Module, Args], Options).
 
-run(Ref, Connection, Timeout) ->
-    gen_server:cast(Ref, {?MODULE, run, Connection, Timeout}).
+call(Ref, Call, Timeout) ->
+    gen_server:call(Ref, Call, Timeout).
 
-run(Ref, Connection, Arg, Timeout) ->
-    gen_server:cast(Ref, {?MODULE, run, Connection, Arg, Timeout}).
+cast(Ref, Cast) ->
+    gen_server:cast(Ref, Cast).
 
 init([Module, Args]) ->
     case Module:init(Args) of
-        {ok, Reql, CallbackState} when is_pid(Reql) ->
-            reql:hold(Reql),
+        {ok, ConnectOptions, CallbackState} ->
+            gen_server:cast(self(), {?MODULE, connect}),
             {ok, #{module => Module,
-                   reql => Reql,
+                   connect_options => ConnectOptions,
+                   monitor_ref => undefined,
+                   connection => undefined,
                    callbackstate => CallbackState}};
         {stop, Reason} ->
             {stop, Reason};
@@ -82,10 +95,24 @@ handle_call(Request, From, State=#{module := Module,
             {stop, Reason, State#{callbackstate => NewState}}
     end.
 
-handle_cast({?MODULE, run, Connection, Timeout}, State=#{reql := Reql}) ->
-    exec_run(Connection, Reql, Timeout, State);
-handle_cast({?MODULE, run, Connection, Arg, Timeout}, State=#{reql := Reql}) ->
-    exec_run(Connection, Reql(Arg), Timeout, State);
+handle_cast({?MODULE, connect}, State=#{connect_options := ConnectOptions}) ->
+    case connect(ConnectOptions) of
+        {ok, MonitorRef, Connection} ->
+            State2 = State#{monitor_ref => MonitorRef,
+                             connection => Connection},
+            exec_handle_connection_up(State2);
+        _Err ->
+            gen_server:cast(self(), {?MODULE, reconnect, 0}),
+            {noreply, State}
+    end;
+handle_cast({?MODULE, reconnect, N}, State=#{connect_options := ConnectOptions}) ->
+    spawn_connect(N, ConnectOptions),
+    {noreply, State};
+handle_cast({?MODULE, bind_connection, Connection}, State) ->
+    MonitorRef = erlang:monitor(process, Connection),
+    State2 = State#{monitor_ref => MonitorRef,
+                     connection => Connection},
+    exec_handle_connection_up(State2);
 handle_cast(Msg, State=#{module := Module,
                           callbackstate := CallbackState}) ->
     case Module:handle_cast(Msg, CallbackState) of
@@ -95,6 +122,16 @@ handle_cast(Msg, State=#{module := Module,
             {stop, Reason, State#{callbackstate => NewState}}
     end.
 
+handle_info({'DOWN', MonitorRef, _, _, _}, State=#{monitor_ref := MonitorRef}) ->
+    State2 = State#{monitor_ref => undefined,
+                    connection => undefined},
+    case exec_handle_connection_down(State2) of
+        {noreply, NewState} ->
+            State3 = State2#{callbackstate => NewState},
+            handle_cast({?MODULE, connect}, State3);
+        {stop, Reason, NewState} ->
+            {stop, Reason, State#{callbackstate => NewState}}
+    end;
 handle_info({rethink_cursor, done}, State) ->
     exec_handle_query_done(State);
 handle_info({rethink_cursor, Result}, State) ->
@@ -111,7 +148,11 @@ handle_info(Info, State=#{module := Module,
     end.
 
 terminate(Reason, #{module := Module,
+                    monitor_ref := MonitorRef,
+                    connection := Connection,
                     callbackstate := CallbackState}) ->
+    if MonitorRef =:= undefined -> ok; true -> erlang:demonitor(MonitorRef) end,
+    gen_rethink:close(Connection),
     Module:terminate(Reason, CallbackState).
 
 code_change(OldVsn, #{module := Module,
@@ -125,11 +166,50 @@ code_change(OldVsn, #{module := Module,
     {ok, State#{callbackstate => CBS}}.
     
 %%
+exec_handle_connection_up(State=#{module := Module,
+                                  connection := Connection,
+                           callbackstate := CallbackState}) ->
+    case Module:handle_connection_up(Connection, CallbackState) of
+        {noreply, NewState} ->
+            {noreply, State#{callbackstate => NewState}};
+        {noreply, {Reql, Timeout}, NewState} ->
+            State2 = State#{callbackstate => NewState},
+            exec_run(Connection, Reql, Timeout, State2);
+        {noreply, Reql, NewState} ->
+            State2 = State#{callbackstate => NewState},
+            exec_run(Connection, Reql, ?ReqlTimeout, State2);
+        {stop, Reason, NewState} ->
+            {stop, Reason, State#{callbackstate => NewState}}
+    end.
+
+exec_handle_connection_down(State=#{module := Module,
+                           callbackstate := CallbackState}) ->
+    case Module:handle_connection_down(CallbackState) of
+        {noreply, NewState} ->
+            {noreply, State#{callbackstate => NewState}};
+        {stop, Reason, NewState} ->
+            {stop, Reason, State#{callbackstate => NewState}}
+    end.
+
 exec_run(Connection, Reql, Timeout, State) ->
     case gen_rethink:run(Connection, Reql, Timeout) of
         {ok, Cursor} when is_pid(Cursor) ->
-            ok = rethink_cursor:activate(Cursor),
-            {noreply, State#{cursor => Cursor}};
+            % Handle the first set of results right away. This provides fewer
+            % race conditions when expecting results (see unit test)
+            case rethink_cursor:flush(Cursor) of
+                {ok, done} ->
+                    exec_handle_query_done(State);
+                {ok, Results} ->
+                    case exec_handle_query_results(Results, State) of
+                        {noreply, State2} ->
+                            ok = rethink_cursor:activate(Cursor),
+                            {noreply, State2#{cursor => Cursor}};
+                        Stop ->
+                            Stop
+                    end;
+                Error ->
+                    exec_handle_query_error(Error, State)
+            end;
         {ok, Result} ->
             case exec_handle_query_result(Result, State) of
                 {noreply, NewState} ->
@@ -139,6 +219,17 @@ exec_run(Connection, Reql, Timeout, State) ->
             end;
         Err ->
             exec_handle_query_error(Err, State)
+    end.
+
+exec_handle_query_results([], State) ->
+    {noreply, State};
+exec_handle_query_results([Result|Results], State=#{module := Module,
+                           callbackstate := CallbackState}) ->
+    case Module:handle_query_result(Result, CallbackState) of
+        {noreply, NewState} ->
+            exec_handle_query_results(Results, State#{callbackstate => NewState});
+        {stop, Reason, NewState} ->
+            {stop, Reason, State#{callbackstate => NewState}}
     end.
 
 exec_handle_query_result(Result, State=#{module := Module,
@@ -166,4 +257,26 @@ exec_handle_query_error(Error, State=#{module := Module,
             {noreply, State#{callbackstate => NewState}};
         {stop, Reason, NewState} ->
             {stop, Reason, State#{callbackstate => NewState}}
+    end.
+
+spawn_connect(N, Options) ->
+    Pid = self(),
+    spawn_link(fun() ->
+                       Sleep = erlang:min(?ReconnectMax, ?ReconnectWait * math:pow(2, N)),
+                       timer:sleep(Sleep),
+                       case gen_rethink:connect_unlinked(Options) of
+                           {ok, Connection} ->
+                               gen_server:cast(Pid, {?MODULE, bind_connection, Connection});
+                           _Err ->
+                               gen_server:cast(Pid, {?MODULE, reconnect, N+1})
+                       end
+               end).
+
+connect(Options) ->
+    case gen_rethink:connect_unlinked(Options) of
+        {ok, Connection} ->
+            MonitorRef = erlang:monitor(process, Connection),
+            {ok, MonitorRef, Connection};
+        Err ->
+            Err
     end.
