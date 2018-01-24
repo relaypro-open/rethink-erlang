@@ -40,7 +40,7 @@ start_link() ->
     gen_requery:start_link(?MODULE, [], []).
 
 state(Ref) ->
-    gen_server:call(Ref, state, infinity).
+    gen_requery:call(Ref, state, infinity).
 
 init([]) ->
     % The ConnectOptions are provided to gen_rethink:connect_unlinked
