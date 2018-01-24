@@ -18,7 +18,7 @@ stop() ->
     application:stop(rethinkdb).
 
 run1(Reql) ->
-    run1(Reql, undefined).
+    run1(Reql, timer:minutes(5)).
 
 run1(Reql, Timeout) ->
     run1("localhost", 28015, Reql, Timeout).

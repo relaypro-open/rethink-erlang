@@ -5,7 +5,7 @@
 %% ------------------------------------------------------------------
 %% API Function Exports
 %% ------------------------------------------------------------------
--export([activate/1, deactivate/1, flush/1, all/1, close/1]).
+-export([activate/1, deactivate/1, flush/1, all/1, all_flat/1, close/1]).
 
 -export([make/5, update_success/3, update_error/2]).
 
@@ -54,6 +54,14 @@ all(Cursor, Acc) ->
             all(Cursor, [Results|Acc]);
         Err ->
             Err
+    end.
+
+all_flat(Cursor) ->
+    case all(Cursor) of
+        {ok, Results} ->
+            {ok, lists:flatten(Results)};
+        Er ->
+            Er
     end.
 
 close(_Cursor) ->
