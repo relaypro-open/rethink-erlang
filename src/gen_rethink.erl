@@ -12,8 +12,8 @@
          connect_unlinked/1,
          run/2,
          run/3,
-         insert_raw/4,
          insert_raw/5,
+         insert_raw/6,
          run_closure/4,
          feed_cursor/3,
          close/1]).
@@ -113,11 +113,11 @@ run_closure(Re, ReqlClosure, Args, Timeout) when is_function(ReqlClosure) ->
                                         timeout => Timeout}}, ?CallTimeout).
 
 
-insert_raw(Re, Db, Table, Json) when is_binary(Json) ->
+insert_raw(Re, Db, Table, Json, Opts) when is_binary(Json) ->
     % Input json must be binary because we need to compute the size.
     % If an iolist json is required, then the function must be modified
     % to accept a size paramater as well
-    insert_raw(Re, Db, Table, Json, ?RethinkTimeout).
+    insert_raw(Re, Db, Table, Json, Opts, ?RethinkTimeout).
 
 %% @doc
 %% insert_raw is provided for speed, but please take caution -- the caller is
@@ -127,10 +127,11 @@ insert_raw(Re, Db, Table, Json) when is_binary(Json) ->
 %% If you get an error from this call like 
 %% {error,{compile_error,<<"Expected a TermType as a NUMBER but found OBJECT.">>}}
 %% it's likely that your input json is not rethink-compatible.
-insert_raw(Re, Db, Table, Json, Timeout) ->
+insert_raw(Re, Db, Table, Json, Opts, Timeout) ->
     gen_server:call(Re, {insert_raw, #{db => Db,
                                        table => Table,
                                        json => Json,
+                                       opts => Opts,
                                        timeout => Timeout}}, ?CallTimeout).
 
 feed_cursor(Re, Cursor, Token) ->
@@ -228,6 +229,7 @@ handle_call({run, #{reql := Reql,
 handle_call({insert_raw, #{db := Db,
                            table := Table,
                            json := Json,
+                           opts := Opts,
                            timeout := Timeout}}, From, State=#{socket := Socket}) ->
     Reql = reql:db(Db),
     reql:table(Reql, Table),
@@ -251,7 +253,7 @@ handle_call({insert_raw, #{db := Db,
                         X,
                         <<"]">>,
                     <<",">>,
-                    rethink:encode(#{}), % insert opts
+                    rethink:encode(Opts), % insert opts
                 <<"]">>,
              <<",">>,
              rethink:encode(#{}), % query start opts

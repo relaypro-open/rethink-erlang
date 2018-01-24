@@ -101,8 +101,9 @@ reql_test_() ->
               % Raw insert test
               fun() ->
                       {ok, C} = gen_rethink:connect(),
-                      {ok, _} = gen_rethink:insert_raw(C, <<"temp_db">>, <<"my_table">>,
-                                <<"{\"name\":\"insertrawitem\"}">>, timer:minutes(5)),
+                      {ok, #{<<"changes">> := [_|_]}} = gen_rethink:insert_raw(C, <<"temp_db">>, <<"my_table">>,
+                                <<"{\"name\":\"insertrawitem\"}">>, #{return_changes => true},
+                                timer:minutes(5)),
                       gen_rethink:close(C)
               end
 
