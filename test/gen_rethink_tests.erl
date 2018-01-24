@@ -5,7 +5,7 @@
 -define(AdminUser, #{<<"id">> := <<"admin">>,<<"password">> := false}).
 
 connect_test() ->
-    {ok, Re} = gen_rethink:connect("localhost", 28015, [], 1000),
+    {ok, Re} = gen_rethink:connect(),
     Reql = reql:db(<<"rethinkdb">>),
     reql:hold(Reql),
     reql:table(Reql, <<"users">>),
@@ -36,3 +36,32 @@ connect_test() ->
         ok
        end().
 
+user_test() ->
+    {ok, Admin} = gen_rethink:connect(),
+    NewUsername = <<"rethink_erlang_unit_test">>,
+    NewPassword = <<"secret">>,
+    NewUser = #{id => NewUsername,
+                password => #{password => NewPassword,
+                              iterations => 1024}},
+    {ok, _} = gen_rethink:run(Admin, fun(X) ->
+                                reql:db(X, rethinkdb),
+                                reql:table(X, users),
+                                reql:insert(X, NewUser)
+                        end),
+    {ok, Re2} = gen_rethink:connect(#{user => NewUsername,
+                                      password => NewPassword}),
+    {ok, _} = gen_rethink:run(Re2, fun(X) ->
+                                           reql:db_list(X)
+                                   end),
+    {ok, _} = gen_rethink:run(Admin, fun(X) ->
+                                             reql:db(X, rethinkdb),
+                                             reql:table(X, users),
+                                             reql:get(X, NewUsername),
+                                             reql:delete(X)
+                                     end),
+    gen_rethink:close(Admin),
+    gen_rethink:close(Re2).
+
+session_test() ->
+    {ok, Session} = gen_rethink_session:start_link(#{}),
+    {ok, _} = gen_rethink_session:get_connection(Session).

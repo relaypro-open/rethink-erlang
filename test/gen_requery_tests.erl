@@ -13,7 +13,7 @@
 -compile([export_all]).
 
 start_link_test() ->
-    {ok, Connection} = gen_rethink:connect("localhost", 28015, [], 1000),
+    {ok, Connection} = gen_rethink:connect(),
     {ok, Ref} = start_link(),
     ok = run(Ref, Connection, 1000),
     timer:sleep(200),

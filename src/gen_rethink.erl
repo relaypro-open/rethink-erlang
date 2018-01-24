@@ -5,10 +5,11 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 -export([connect/0,
+         connect/1,
          connect/2,
          connect/4,
          connect_unlinked/0,
-         connect_unlinked/4,
+         connect_unlinked/1,
          run/2,
          run/3,
          insert_raw/4,
@@ -28,15 +29,22 @@
 -define(Magic, <<16#C3, 16#BD, 16#C2, 16#34>>).
 -define(CallTimeout, timer:hours(1)).
 -define(RethinkTimeout, 5000).
+-define(ConnectTimeout, 20000).
 
 %% ------------------------------------------------------------------
 %% API Function Definitions
 %% ------------------------------------------------------------------
+connect(Options) ->
+    Host = maps:get(host, Options, "localhost"),
+    Port = maps:get(port, Options, 28015),
+    Timeout = maps:get(timeout, Options, ?ConnectTimeout),
+    connect(Host, Port, Options, Timeout).
+
 connect() ->
-    connect("localhost", 28015).
+    connect(#{}).
 
 connect(Address, Port) ->
-    connect(Address, Port, [], ?RethinkTimeout).
+    connect(#{host => Address, port => Port}).
 
 connect(Address, Port, Options, Timeout) ->
     case gen_server:start_link(?MODULE, [], []) of
@@ -47,12 +55,15 @@ connect(Address, Port, Options, Timeout) ->
     end.
 
 connect_unlinked() ->
-    connect_unlinked("localhost", 28015, [], ?RethinkTimeout).
+    connect_unlinked(#{}).
 
-connect_unlinked(Address, Port, Options, Timeout) ->
+connect_unlinked(Options) ->
+    Host = maps:get(host, Options, "localhost"),
+    Port = maps:get(port, Options, 28015),
+    Timeout = maps:get(timeout, Options, ?ConnectTimeout),
     case gen_server:start(?MODULE, [], []) of
         {ok, Re} ->
-            connect(Re, Address, Port, Options, Timeout);
+            connect(Re, Host, Port, Options, Timeout);
         Err ->
             Err
     end.
@@ -151,9 +162,11 @@ init([]) ->
 
 handle_call({connect, #{address := Address,
                         port := Port,
-                        options := _Options,
+                        options := Options,
                         timeout := Timeout}}, _From, State) ->
-    TcpOptions = [{active, false}, binary],
+    TcpOptions = filter_tcp_options(maps:get(tcp_options, Options, [])),
+    User = maps:get(user, Options, <<"admin">>),
+    Password = maps:get(password, Options, <<>>),
     case gen_tcp:connect(Address, Port, TcpOptions, Timeout) of
         {ok, Socket} ->
             SocketState = State#{socket => Socket},
@@ -163,8 +176,6 @@ handle_call({connect, #{address := Address,
                 {ok, _} ->
                     Method = rethink_scram:method(),
                     Nonce = rethink_scram:generate_nonce(),
-                    User = <<"admin">>,
-                    Password = <<>>,
                     ClientFirstMessageBare =
                             <<"n=", User/binary, ",r=", Nonce/binary>>,
                     ClientFirstMessage =
@@ -535,3 +546,9 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
         _ ->
             State#{receivers => maps:put(Token, UpdatedReceiver, Receivers)}
     end.
+
+filter_tcp_options(TcpOptions) ->
+    TcpOptions2 = proplists:delete(active, TcpOptions),
+    TcpOptions3 = proplists:delete(binary, TcpOptions2),
+    TcpOptions4 = [{active, false}, binary|TcpOptions3],
+    TcpOptions4.
