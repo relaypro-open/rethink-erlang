@@ -262,7 +262,7 @@ exec_handle_query_error(Error, State=#{module := Module,
 spawn_connect(N, Options) ->
     Pid = self(),
     spawn_link(fun() ->
-                       Sleep = erlang:min(?ReconnectMax, ?ReconnectWait * math:pow(2, N)),
+                       Sleep = erlang:min(?ReconnectMax, trunc(?ReconnectWait * math:pow(2, N))),
                        timer:sleep(Sleep),
                        case gen_rethink:connect_unlinked(Options) of
                            {ok, Connection} ->
