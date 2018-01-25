@@ -355,13 +355,17 @@ handle_query_data(F, RecvBuffer=#{token := Token,
                                len := Len,
                                recv_size := RecvSize,
                                data := Data}, NewData, State) when Len > 0 andalso
-                                                            RecvSize == Len ->
+                                                            RecvSize >= Len ->
     %io:format("query data notify ~p ~p ~p~n", [Token, Len, RecvSize]),
-    State2 = F(Token, Len, iolist_to_binary(Data), State),
+    Data2 = iolist_to_binary(Data),
+    {NotifyData, Remain} = {binary:part(Data2, {0, Len}),
+                            binary:part(Data2, {Len, RecvSize-Len})},
+    State2 = F(Token, Len, NotifyData, State),
+    NewData2 = iolist_to_binary([Remain, NewData]),
     handle_query_data(F, RecvBuffer#{token => undefined,
                                   len => 0,
                                   data => <<>>,
-                                  recv_size => 0}, NewData, State2);
+                                  recv_size => 0}, NewData2, State2);
 handle_query_data(_F, RecvBuffer, <<>>, State) ->
     %io:format("query data no data~n", []),
     {RecvBuffer, State};
@@ -383,7 +387,7 @@ handle_query_data(F, RecvBuffer=#{token := _Token,
     handle_query_data(F, RecvBuffer#{recv_size => RecvSize + SizeAdd,
                                   data => [Data, BufferAdd]}, Remain, State);
 handle_query_data(_F, _, _, State) ->
-    %io:format("query data reset ~n", []),
+    %io:format("query data reset ~p~n", [State]),
     {#{token => undefined,
       len => 0,
       recv_size => 0,

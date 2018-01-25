@@ -105,6 +105,34 @@ reql_test_() ->
                                 <<"{\"name\":\"insertrawitem\"}">>, #{return_changes => true},
                                 timer:minutes(5)),
                       gen_rethink:close(C)
+              end,
+
+              % Concurrent ReQL test
+              fun() ->
+                      {ok, C} = gen_rethink:connect(),
+                      Self = self(),
+                      WorkFunc = fun() ->
+                                    Waiter = reql:new(),
+                                    reql:javascript(Waiter, <<"while(true) {}">>,
+                                                    #{timeout => 0.1}),
+                                    R = gen_rethink:run(C, Waiter, 500),
+                                    Self ! R
+                                 end,
+                      Num = 2,
+                      [ spawn(WorkFunc) || _ <- lists:seq(1, Num) ],
+                      fun Loop(0) -> ok;
+                          Loop(N) ->
+                            receive
+                                {error,{runtime_error,<<"JavaScript query `while(true) {}` timed out after 0.100 seconds.">>}} ->
+                                    % We received timeout from rethink server - expected
+                                    Loop(N-1);
+                                Msg ->
+                                    % We received client-side timeout, unexpected
+                                    throw(Msg)
+                            after 10000 ->
+                                      throw({error, timeout})
+                            end
+                      end(Num)
               end
 
              ]
