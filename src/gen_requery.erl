@@ -126,11 +126,10 @@ handle_info({'DOWN', MonitorRef, _, _, _}, State=#{monitor_ref := MonitorRef}) -
     State2 = State#{monitor_ref => undefined,
                     connection => undefined},
     case exec_handle_connection_down(State2) of
-        {noreply, NewState} ->
-            State3 = State2#{callbackstate => NewState},
+        {noreply, State3} ->
             handle_cast({?MODULE, connect}, State3);
-        {stop, Reason, NewState} ->
-            {stop, Reason, State#{callbackstate => NewState}}
+        {stop, Reason, State3} ->
+            {stop, Reason, State3}
     end;
 handle_info({rethink_cursor, done}, State) ->
     exec_handle_query_done(State);
