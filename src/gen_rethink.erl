@@ -16,7 +16,8 @@
          insert_raw/6,
          run_closure/4,
          feed_cursor/3,
-         close/1]).
+         close/1,
+         server_info/1]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -78,6 +79,11 @@ connect(Re, Address, Port, Options, Timeout) ->
             gen_server:stop(Re),
             Err
     end.
+
+server_info(Re) ->
+    gen_server:call(Re, {reql_wire_query_type,
+                         #{query_type => server_info,
+                           timeout => ?RethinkTimeout}}, ?CallTimeout).
 
 run(Re, Reql) ->
     run(Re, Reql, ?RethinkTimeout).
@@ -275,6 +281,18 @@ handle_call({run_closure, #{reql := ReqlClosure,
     Query = erlang:apply(ReqlClosure, Args),
     Size = iolist_size(Query),
 
+    TokenBin = encode_unsigned(Token, 8, big),
+    SizeBin = encode_unsigned(Size, 4, little),
+    Packet = [TokenBin, SizeBin, Query],
+    ok = send_query(Socket, Packet),
+    {noreply, register_receiver(run, TokenBin, From, Timeout, State2)};
+handle_call({reql_wire_query_type, #{query_type := QueryType,
+                                     timeout := Timeout}},
+                        From,
+                       State=#{socket := Socket}) ->
+    {Token, State2} = next_token(State),
+    Query = reql:wire(QueryType),
+    Size = iolist_size(Query),
     TokenBin = encode_unsigned(Token, 8, big),
     SizeBin = encode_unsigned(Size, 4, little),
     Packet = [TokenBin, SizeBin, Query],

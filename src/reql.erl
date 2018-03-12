@@ -420,7 +420,9 @@ hold(R) -> gen_server:call(R, {refcount, 1}, ?CallTimeout).
 release(R) -> gen_server:call(R, {refcount, -1}, ?CallTimeout).
 
 wire(continue) ->
-    rethink:encode([ql2:query_type(wire, continue)]).
+    rethink:encode([ql2:query_type(wire, continue)]);
+wire(server_info) ->
+    rethink:encode([ql2:query_type(wire, server_info)]).
 
 wire(QueryType, R, Opts) ->
     Q = q(R),

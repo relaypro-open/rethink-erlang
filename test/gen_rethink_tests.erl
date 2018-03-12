@@ -65,3 +65,8 @@ user_test() ->
 session_test() ->
     {ok, Session} = gen_rethink_session:start_link(#{}),
     {ok, _} = gen_rethink_session:get_connection(Session).
+
+server_info_test() ->
+    {ok, C} = gen_rethink:connect(),
+    {ok, _} = gen_rethink:server_info(C),
+    gen_rethink:close(C).
