@@ -52,6 +52,12 @@ gen_rethink_session:get_connection(my_session_name).
 
 The return value will be either `{ok, Connection}` or `{error, no_connection}`.
 
+To start a persistent connection for eunit tests, include this in your setup fixture: 
+```
+start() ->
+    gen_rethink_session:start_link(my_session_name,#{}).
+```
+
 Creating a ReQL query
 ---------------------
 Since Erlang doesn't support chaining function calls, ReQL queries are created
