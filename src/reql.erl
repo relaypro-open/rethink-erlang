@@ -35,7 +35,7 @@
 -export([map/2, map/3, map/4, map/5, with_fields/2, with_fields/3, with_fields/4,
          with_fields/5, concat_map/2, order_by/2, order_by/3, skip/2, limit/2,
          slice/2, slice/3, slice/4, nth/2, offsets_of/2, is_empty/1, union/2,
-         union/3, sample/2]).
+         union/3, sample/2, desc/1, asc/1]).
 
 % Aggregation
 -export([group/2, group/3, ungroup/1, reduce/2, reduce/3, fold/3, fold/4, count/1,
@@ -230,6 +230,8 @@ db(DB) ->
 ?REQL1(union).
 ?REQL1_O(union).
 ?REQL1(sample).
+desc(X) -> {desc, X}.
+asc(X) -> {asc, X}.
 
 % Aggregation
 ?REQL1(group).

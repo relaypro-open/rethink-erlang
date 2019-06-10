@@ -26,6 +26,10 @@ datum({{A, B, C}, Timezone}) when is_integer(A) andalso
        timezone => Timezone };
 datum({iso8601, X}) ->
     [ql2:term_type(wire, iso8601), [X]];
+datum({desc, X}) ->
+    [ql2:term_type(wire, desc), [X]];
+datum({asc, X}) ->
+    [ql2:term_type(wire, asc), [X]];
 datum({binary, Blob}) ->
     #{ '$reql_type$' => <<"BINARY">>,
        data => base64:encode(Blob) };
