@@ -9,7 +9,7 @@
 %% ------------------------------------------------------------------
 
 % Accessing ReQL
--export([x/1, new/0, new/1, var/1, apply/2, closure/2, closure/3, changes/1, changes/2]).
+-export([x/1, new/0, new/1, new/2, var/1, apply/2, closure/2, closure/3, changes/1, changes/2]).
 
 % Manipulating databases
 -export([db_create/2, db_drop/2, db_list/1]).
@@ -134,6 +134,9 @@ new() ->
 new(List) when is_list(List) ->
     R = new(),
     apply(R, List).
+
+new(Db, Table) ->
+    new([{db, Db}, {table, Table}]).
 
 apply(R, []) ->
     R;

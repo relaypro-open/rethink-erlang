@@ -160,7 +160,12 @@ reql_test_() ->
                                       throw({error, timeout})
                             end
                       end(Num)
-              end
+              end,
+
+              % Convenience functions
+              fun() -> {ok, _} = rethink:run1(reql:x(fun(X) -> reql:db(X, temp_db), reql:table(X, my_table) end)) end,
+              fun() -> {ok, _} = rethink:run1(reql:new([{db,temp_db},{table,my_table}])) end,
+              fun() -> {ok, _} = rethink:run1(reql:new(temp_db,my_table)) end
 
              ]
      end}.
