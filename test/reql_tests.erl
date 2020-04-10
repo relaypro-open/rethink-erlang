@@ -24,13 +24,18 @@ reql_test_() ->
 
               % Manipulating tables
               fun() -> {ok, _} = rethink:run1(reql:table_create(reql:db(temp_db), my_table)) end,
+              fun() -> {ok, _} = rethink:run1(reql:table_create(reql:db(temp_db), my_table2)) end,
               fun() -> {ok, _} = rethink:run1(reql:table_list(reql:db(temp_db))) end,
               fun() -> {ok, _} = rethink:run1(reql:table_drop(reql:db(temp_db), my_table)) end,
+              fun() -> {ok, _} = rethink:run1(reql:table_drop(reql:db(temp_db), my_table2)) end,
               fun() -> {ok, _} = rethink:run1(reql:table_create(reql:db(temp_db), my_table)) end,
+              fun() -> {ok, _} = rethink:run1(reql:table_create(reql:db(temp_db), my_table2)) end,
 
               fun() -> {ok, _} = rethink:run1(reql:index_create(reql:table(reql:db(temp_db), my_table), my_index)) end,
+              fun() -> {ok, _} = rethink:run1(reql:index_create(reql:table(reql:db(temp_db), my_table2), my_index)) end,
               fun() -> {ok, _} = rethink:run1(reql:index_wait(reql:table(reql:db(temp_db), my_table), my_index)) end,
               fun() -> {ok, _} = rethink:run1(reql:index_wait(reql:table(reql:db(temp_db), my_table))) end,
+              fun() -> {ok, _} = rethink:run1(reql:index_wait(reql:table(reql:db(temp_db), my_table2))) end,
               fun() -> {ok, _} = rethink:run1(reql:index_list(reql:table(reql:db(temp_db), my_table))) end,
               fun() -> {ok, _} = rethink:run1(reql:index_status(reql:table(reql:db(temp_db), my_table))) end,
               fun() -> {ok, _} = rethink:run1(reql:index_status(reql:table(reql:db(temp_db), my_table), my_index)) end,
@@ -50,6 +55,17 @@ reql_test_() ->
                                                            list => ?List},
                                                          my_index => 1})
                                    end) end,
+              fun() -> {ok, _} = rethink:run1(
+                                   fun(R) ->
+                                       reql:db(R, temp_db),
+                                       reql:table(R, my_table2),
+                                       reql:insert(R, #{ name => <<"jms2">>,
+                                                         nest => #{
+                                                           timestamp => ?Now,
+                                                           blob => reql:binary(?Binary),
+                                                           list => ?List},
+                                                         my_index => 2})
+                                   end) end,
 
               % Selecting data
               fun() ->
@@ -63,6 +79,17 @@ reql_test_() ->
                                    <<"list">> := ?List
                                   },
                                <<"my_index">> := 1}]} = rethink:run1(GetAll)
+              end,
+              fun() ->
+                      Union1 = reql:db(temp_db),
+                      reql:table(Union1, my_table),
+                      Union2 = reql:db(temp_db),
+                      reql:table(Union2, my_table2),
+                      reql:union(Union1, Union2),
+                      {ok, Results} = rethink:run1(Union1),
+                      2 = length(Results),
+                      false = is_process_alive(Union1),
+                      false = is_process_alive(Union2)
               end,
 
               % Filter function
