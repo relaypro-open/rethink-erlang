@@ -80,7 +80,7 @@
 % Administration
 -export([grant/3, config/1, rebalance/1, reconfigure/2, status/1, wait/1, wait/2]).
 
--export([hold/1, release/1, wire/1, wire/3, wire_raw/1, q/1, prepare_query/1, allocate_var/1]).
+-export([hold/1, release/1, wire/1, wire/3, wire_raw/1, q/1, prepare_query/1, allocate_var/1, resolve/1]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -424,20 +424,22 @@ expr(R, X) -> call_cmd(R, datum, [X]).
 hold(R) -> gen_server:call(R, {refcount, 1}, ?CallTimeout).
 release(R) -> gen_server:call(R, {refcount, -1}, ?CallTimeout).
 
+%% resolve reql pid as a query into rethinkdb
+resolve(R) ->
+    prepare_query(q(R)).
+
 wire(continue) ->
     rethink:encode([ql2:query_type(wire, continue)]);
 wire(server_info) ->
     rethink:encode([ql2:query_type(wire, server_info)]).
 
 wire(QueryType, R, Opts) ->
-    Q = q(R),
     rethink:encode([ql2:query_type(wire, QueryType),
-                    prepare_query(Q),
+                    resolve(R),
                     Opts]).
 
 wire_raw(R) ->
-    Q = q(R),
-    rethink:encode(prepare_query(Q)).
+    rethink:encode(resolve(R)).
 
 closure(R, Cmd) ->
     closure(R, Cmd, #{}).
@@ -499,7 +501,7 @@ handle_call({q}, _From, State=#{q := Q}) ->
       {reply, Q, State});
 handle_call({refcount, C}, _From, State=#{refcount := RefCount}) ->
     reset_idle_timer(
-      {reply, ok, State#{refcount => RefCount + C}}).
+      {reply, self(), State#{refcount => RefCount + C}}).
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
