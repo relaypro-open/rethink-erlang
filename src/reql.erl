@@ -448,7 +448,7 @@ closure(R, Cmd, Opts) ->
     StartRaw = rethink:encode(ql2:query_type(wire, start)),
     CmdRaw = rethink:encode(ql2:term_type(wire, Cmd)),
     EmptyOptsRaw = rethink:encode(#{}),
-    CmdOptsRaw = rethink:encode(Opts),
+    CmdOptsRaw = rethink:encode(prepare_opts(Opts)),
     Inner = wire_raw(R),
     FirstPart = iolist_to_binary([
              <<"[">>,
