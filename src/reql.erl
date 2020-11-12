@@ -544,13 +544,22 @@ prepare_query(#reql{cmd=Cmd, args=Args, opts=Opts}) ->
         undefined ->
             [ ql2:term_type(wire, Cmd), List ];
         _ ->
-            [ ql2:term_type(wire, Cmd), List, Opts ]
+            [ ql2:term_type(wire, Cmd), List, prepare_opts(Opts) ]
     end;
 prepare_query(Fun) when is_function(Fun) ->
     Func = prepare_func(Fun),
     prepare_query(Func);
 prepare_query(X) ->
     ql2:datum(X).
+
+prepare_opts(undefined) -> undefined;
+prepare_opts(Map) when is_map(Map) ->
+    maps:map(
+      fun(_K, Fun) when is_function(Fun) ->
+              prepare_query(prepare_func(Fun));
+         (_K, V) ->
+              V
+      end, Map).
 
 prepare_func(Fun) ->
     FunInfo = erlang:fun_info(Fun),

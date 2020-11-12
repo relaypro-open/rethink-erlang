@@ -64,7 +64,8 @@ reql_test_() ->
                                                            timestamp => ?Now,
                                                            blob => reql:binary(?Binary),
                                                            list => ?List},
-                                                         my_index => 2})
+                                                         my_index => 2},
+                                                   #{conflict => fun(_, _, New) -> New end})
                                    end) end,
 
               % Selecting data
