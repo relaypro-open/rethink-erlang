@@ -45,6 +45,7 @@ stop(_) ->
 %%--------------------------------------------------------------------
 init([]) ->
     ets:new(rethink_counters, [public, named_table]),
+    ets:new(rethink_session_stats, [public, named_table]),
     {ok, {{one_for_one, 5, 10}, []}}.
 
 %%%===================================================================

@@ -47,7 +47,7 @@ connect(Address, Port) ->
     connect(#{host => Address, port => Port}).
 
 connect(Address, Port, Options, Timeout) ->
-    case gen_server:start_link(?MODULE, [], []) of
+    case gen_server:start_link(?MODULE, filter_init_options(Options), []) of
         {ok, Re} ->
             connect(Re, Address, Port, Options, Timeout);
         Err ->
@@ -61,7 +61,7 @@ connect_unlinked(Options) ->
     Host = maps:get(host, Options, "localhost"),
     Port = maps:get(port, Options, 28015),
     Timeout = maps:get(timeout, Options, ?ConnectTimeout),
-    case gen_server:start(?MODULE, [], []) of
+    case gen_server:start(?MODULE, filter_init_options(Options), []) of
         {ok, Re} ->
             connect(Re, Host, Port, Options, Timeout);
         Err ->
@@ -154,14 +154,14 @@ close(Re) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
-init([]) ->
-    {ok, #{recv_buffer => #{data => [],
-                            token => undefined,
-                            len => 0,
-                            recv_size => 0},
-           socket => undefined,
-           token => 1,
-           receivers => #{}}}.
+init(InitOptions=#{}) ->
+    {ok, InitOptions#{recv_buffer => #{data => [],
+                                       token => undefined,
+                                       len => 0,
+                                       recv_size => 0},
+                      socket => undefined,
+                      token => 1,
+                      receivers => #{}}}.
 
 handle_call({connect, #{address := Address,
                         port := Port,
@@ -205,6 +205,7 @@ handle_call({connect, #{address := Address,
                             Resp3 = send_recv_null_term(Socket, SendCFinM, Timeout),
                             case expect_json_success(Resp3) of
                                 _Reply3={ok, _} ->
+                                    track_new_connection(SocketState),
                                     inet:setopts(Socket, [{active, once}]),
                                     {reply, ok, SocketState};
                                 Er ->
@@ -464,7 +465,7 @@ expect_query_response(Resp) ->
     %io:format("decoding ~p~n", [Resp]),
     {ok, rethink:decode(Resp)}.
 
-register_receiver(Type, Token, From, Timeout, State=#{receivers := Receivers}) ->
+register_receiver(Type, Token, From, Timeout, State) ->
     %io:format("reg  ~p ~p ~p ~p~n", [Type, Token, From, Timeout]),
     TRef = case Timeout of
         infinity ->
@@ -478,20 +479,64 @@ register_receiver(Type, Token, From, Timeout, State=#{receivers := Receivers}) -
                                           {receiver_timeout, Token, TimeoutRef}),
             {TimeoutRef, CancelRef}
     end,
-    State#{receivers => Receivers#{ Token => {Type, From, Timeout, TRef} }}.
+    add_or_update_receiver(Token, {Type, From, Timeout, TRef}, State).
 
 timeout_receiver(Token, TimeoutRef, State=#{receivers := Receivers}) ->
     TimeoutError = {error, timeout},
     case maps:find(Token, Receivers) of
         {ok, {run, From, _Timeout, {TimeoutRef, _}}} ->
             gen_server:reply(From, TimeoutError),
-            State#{receivers => maps:remove(Token, Receivers)};
+            remove_receiver(Token, State);
         {ok, {cursor, Cursor, _Timeout, {TimeoutRef, _}}} ->
             rethink_cursor:update_error(Cursor, TimeoutError),
-            State#{receivers => maps:remove(Token, Receivers)};
+            remove_receiver(Token, State);
         _ ->
             State
     end.
+
+add_or_update_receiver(Token, Receiver, State=#{receivers := Receivers}) ->
+    track_waiting_token(Token, State),
+    State#{receivers => Receivers#{ Token => Receiver }}.
+
+remove_receiver(Token, State=#{receivers := Receivers}) ->
+    track_completed_token(Token, State),
+    State#{receivers => maps:remove(Token, Receivers)}.
+
+track_new_connection(#{stats_table := StatsTable}) ->
+    %% Updating stats with 0 initializes the pid with 'ok' status
+    update_stats(waiting, 0, StatsTable);
+track_new_connection(_) ->
+    ok.
+
+track_waiting_token(Token, #{stats_table := StatsTable,
+                             receivers := Receivers}) ->
+    case maps:find(Token, Receivers) of
+        {ok, _} ->
+            %% already tracked
+            ok;
+        error ->
+            update_stats(waiting, 1, StatsTable)
+    end;
+track_waiting_token(_, _) ->
+    ok.
+
+track_completed_token(Token, #{stats_table := StatsTable,
+                               receivers := Receivers}) ->
+    case maps:find(Token, Receivers) of
+        {ok, _} ->
+            update_stats(waiting, -1, StatsTable),
+            update_stats(completed, 1, StatsTable);
+        error ->
+            ok
+    end;
+track_completed_token(_, _) ->
+    ok.
+
+update_stats(Key, Value, Table) ->
+    ets:update_counter(Table, self(), {stats_pos(Key), Value}, {self(), ok, 0, 0}).
+
+stats_pos(waiting) -> 3;
+stats_pos(completed) -> 4.
 
 cancel_timer({_, CancelRef}) -> erlang:cancel_timer(CancelRef);
 cancel_timer(_) -> ok.
@@ -561,9 +606,9 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
     end,
     case UpdatedReceiver of
         undefined ->
-            State#{receivers => maps:remove(Token, Receivers)};
+            remove_receiver(Token, State);
         _ ->
-            State#{receivers => maps:put(Token, UpdatedReceiver, Receivers)}
+            add_or_update_receiver(Token, UpdatedReceiver, State)
     end.
 
 filter_tcp_options(TcpOptions) ->
@@ -571,3 +616,6 @@ filter_tcp_options(TcpOptions) ->
     TcpOptions3 = proplists:delete(binary, TcpOptions2),
     TcpOptions4 = [{active, false}, binary|TcpOptions3],
     TcpOptions4.
+
+filter_init_options(ConnectionOptions) ->
+    maps:with([stats_table], ConnectionOptions).

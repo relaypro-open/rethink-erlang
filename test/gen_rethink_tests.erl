@@ -63,8 +63,13 @@ user_test() ->
     gen_rethink:close(Re2).
 
 session_test() ->
-    {ok, Session} = gen_rethink_session:start_link(#{}),
-    {ok, _} = gen_rethink_session:get_connection(Session).
+    ets:new(rethink_eunit_stats_table, [public, named_table]),
+    {ok, Session} = gen_rethink_session:start_link(#{stats_table => rethink_eunit_stats_table}),
+    {ok, Re} = gen_rethink_session:get_connection(Session),
+    [_] = ets:tab2list(rethink_eunit_stats_table),
+    _ = gen_rethink:run(Re, fun(X) -> reql:db_list(X) end),
+    [_] = ets:tab2list(rethink_eunit_stats_table),
+    [_] = rethink_session_stats:get_connections(rethink_eunit_stats_table).
 
 server_info_test() ->
     {ok, C} = gen_rethink:connect(),

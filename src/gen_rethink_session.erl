@@ -1,7 +1,7 @@
 -module(gen_rethink_session).
 -behaviour(gen_requery).
 
--export([start_link/0, start_link/1, start_link/2, get_connection/1]).
+-export([start_link/0, start_link/1, start_link/2, get_connection/1, default_stats_table/0]).
 
 -export([handle_connection_up/2,
          handle_connection_down/1,
@@ -14,25 +14,29 @@
 
 -define(CallTimeout, timer:hours(1)).
 
+default_stats_table() ->
+    rethink_session_stats.
+
 start_link() ->
     start_link(#{}).
 
 start_link(Options) ->
-    gen_requery:start_link(?MODULE, [Options], []).
+    gen_requery:start_link(?MODULE, [ensure_stats_table(Options)], []).
 
 start_link(Name, Options) ->
-    gen_requery:start_link({local, Name}, ?MODULE, [Options], []).
+    gen_requery:start_link({local, Name}, ?MODULE, [ensure_stats_table(Options)], []).
 
 get_connection(Svr) ->
     gen_requery:call(Svr, {get_connection}, ?CallTimeout).
 
-init([Options]) ->
-    {ok, Options, #{connection => undefined}}.
+init([Options=#{stats_table := StatsTable}]) ->
+    {ok, Options, #{connection => undefined, stats_table => StatsTable}}.
 
 handle_connection_up(Connection, State) ->
     {noreply, State#{connection => Connection}}.
 
-handle_connection_down(State) ->
+handle_connection_down(State=#{stats_table := StatsTable}) ->
+    ets:delete(StatsTable, maps:get(connection, State, undefined)),
     {noreply, State#{connection => undefined}}.
 
 handle_query_result(_, State) ->
@@ -60,3 +64,8 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+ensure_stats_table(Options=#{stats_table := _}) ->
+    Options;
+ensure_stats_table(Options) ->
+    Options#{stats_table => default_stats_table()}.
