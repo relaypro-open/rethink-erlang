@@ -166,7 +166,32 @@ reql_test_() ->
               % Convenience functions
               fun() -> {ok, _} = rethink:run1(reql:x(fun(X) -> reql:db(X, temp_db), reql:table(X, my_table) end)) end,
               fun() -> {ok, _} = rethink:run1(reql:new([{db,temp_db},{table,my_table}])) end,
-              fun() -> {ok, _} = rethink:run1(reql:new(temp_db,my_table)) end
+              fun() -> {ok, _} = rethink:run1(reql:new(temp_db,my_table)) end,
+
+              % Control functions
+              fun() ->
+                      % This test implements a compare-and-swap operation to test 'branch' and 'error' commands.
+                      % Notice that the record must exist in the table before the CAS. RethinkDB docs indicate
+                      % that this operation is atomic.
+                      {ok, C} = gen_rethink:connect(),
+                      _ = gen_rethink:run(C, fun(X) -> reql:db(X, temp_db), reql:table(X, my_table), reql:get(X, cas_test), reql:delete(X) end),
+                      _ = gen_rethink:run(C, fun(X) -> reql:db(X, temp_db), reql:table(X, my_table), reql:insert(X, #{id => cas_test, val => undefined}) end),
+                      CasFun = fun() -> gen_rethink:run(C, fun(X) ->
+                                                                   reql:db(X, temp_db),
+                                                                   reql:table(X, my_table),
+                                                                   reql:get(X, cas_test),
+                                                                   reql:update(X,
+                                                                               fun(RSchemaLock) ->
+                                                                                       reql:branch(reql:eq(reql:bracket(RSchemaLock, val), undefined),
+                                                                                                   #{val => <<"held">>},
+                                                                                                   reql:error(held))
+                                                                               end)
+                                                           end)
+                               end,
+                      {ok, #{<<"replaced">> := 1}} = CasFun(),
+                      {ok, #{<<"errors">> := 1, <<"first_error">> := <<"held">>}} = CasFun(),
+                      gen_rethink:close(C)
+              end
 
              ]
      end}.

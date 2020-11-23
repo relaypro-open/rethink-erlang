@@ -69,7 +69,7 @@
 -export([args/1, binary/1, do/1, do/2, do/3, for_each/2, range/1, range/2,
          range/3, default/2, expr/1, expr/2, javascript/2, javascript/3, coerce_to/2,
          type_of/1, info/1, json/2, to_json_string/1, http/2, http/3, uuid/1,
-         uuid/2]).
+         uuid/2, branch/3, error/1]).
 
 % Geospatial commands
 -export([circle/3, circle/4, distance/3, distance/4, fill/1, geojson/1,
@@ -390,6 +390,12 @@ expr(R, X) -> call_cmd(R, datum, [X]).
 ?REQL1_O(http).
 ?REQL0(uuid).
 ?REQL1(uuid).
+branch(Test, TrueAction, FalseAction) ->
+    {ok, R} = gen_server:start_link(?MODULE, [], []),
+    call_cmd(R, branch, [Test, TrueAction, FalseAction]).
+error(Message) ->
+    {ok, R} = gen_server:start_link(?MODULE, [], []),
+    call_cmd(R, error, [Message]).
 
 % Geospatial commands
 ?REQL2(circle).
