@@ -175,14 +175,14 @@ reql_test_() ->
                       % that this operation is atomic.
                       {ok, C} = gen_rethink:connect(),
                       _ = gen_rethink:run(C, fun(X) -> reql:db(X, temp_db), reql:table(X, my_table), reql:get(X, cas_test), reql:delete(X) end),
-                      _ = gen_rethink:run(C, fun(X) -> reql:db(X, temp_db), reql:table(X, my_table), reql:insert(X, #{id => cas_test, val => undefined}) end),
+                      _ = gen_rethink:run(C, fun(X) -> reql:db(X, temp_db), reql:table(X, my_table), reql:insert(X, #{id => cas_test, val => null}) end),
                       CasFun = fun() -> gen_rethink:run(C, fun(X) ->
                                                                    reql:db(X, temp_db),
                                                                    reql:table(X, my_table),
                                                                    reql:get(X, cas_test),
                                                                    reql:update(X,
                                                                                fun(RSchemaLock) ->
-                                                                                       reql:branch(reql:eq(reql:bracket(RSchemaLock, val), undefined),
+                                                                                       reql:branch(reql:eq(reql:bracket(RSchemaLock, val), null),
                                                                                                    #{val => <<"held">>},
                                                                                                    reql:error(held))
                                                                                end)
