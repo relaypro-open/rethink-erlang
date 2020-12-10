@@ -9,7 +9,7 @@
 %% ------------------------------------------------------------------
 
 % Accessing ReQL
--export([x/1, new/0, new/1, new/2, var/1, apply/2, closure/2, closure/3, changes/1, changes/2]).
+-export([x/1, new/0, new/1, new/2, var/1, clone/1, apply/2, closure/2, closure/3, changes/1, changes/2]).
 
 % Manipulating databases
 -export([db_create/2, db_drop/2, db_list/1]).
@@ -137,6 +137,18 @@ new(List) when is_list(List) ->
 
 new(Db, Table) ->
     new([{db, Db}, {table, Table}]).
+
+%% @doc due to the stateful nature of the reql process, complex queries
+%% may need to clone the reql process at strategic times to snapshot the
+%% object. For example, if reql:bracket must be used twice in a single
+%% anonymous function, the input var must be cloned at least once, because
+%% simply calling reql:bracket changes the underlying state.
+clone(Src) ->
+    {ok, R} = gen_server:start_link(?MODULE, [], []),
+    SrcState = gen_server:call(Src, get_state, ?CallTimeout),
+    io:format("srcstate=~p~n", [SrcState]),
+    gen_server:cast(R, {set_state, SrcState}),
+    R.
 
 apply(R, []) ->
     R;
@@ -507,9 +519,11 @@ handle_call({q}, _From, State=#{q := Q}) ->
       {reply, Q, State});
 handle_call({refcount, C}, _From, State=#{refcount := RefCount}) ->
     reset_idle_timer(
-      {reply, self(), State#{refcount => RefCount + C}}).
+      {reply, self(), State#{refcount => RefCount + C}});
+handle_call(get_state, _From, State) ->
+    reset_idle_timer({reply, State, State}).
 
-handle_cast(_Msg, State) ->
+handle_cast({set_state, State}, _State) ->
     {noreply, State}.
 
 handle_info(timeout, State) ->
