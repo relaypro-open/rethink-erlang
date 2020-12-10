@@ -146,7 +146,6 @@ new(Db, Table) ->
 clone(Src) ->
     {ok, R} = gen_server:start_link(?MODULE, [], []),
     SrcState = gen_server:call(Src, get_state, ?CallTimeout),
-    io:format("srcstate=~p~n", [SrcState]),
     gen_server:cast(R, {set_state, SrcState}),
     R.
 
