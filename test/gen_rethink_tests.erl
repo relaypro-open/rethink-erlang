@@ -1,6 +1,7 @@
 -module(gen_rethink_tests).
 
 -compile([export_all]).
+-include_lib("eunit/include/eunit.hrl").
 
 -define(AdminUser, #{<<"id">> := <<"admin">>,<<"password">> := false}).
 
@@ -79,3 +80,13 @@ server_info_test() ->
     {ok, C} = gen_rethink:connect(),
     {ok, _} = gen_rethink:server_info(C),
     gen_rethink:close(C).
+
+% unable to test with eunit
+%maxlen_test() ->
+%    {ok, C} = gen_rethink:connect_unlinked(),
+%    application:set_env(rethink, maxlen, 2),
+%    try gen_rethink:server_info(C)
+%    catch exit:{{maxlen_exceeded, _}, _} ->
+%              ok
+%    end.
+

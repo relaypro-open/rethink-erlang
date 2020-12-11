@@ -31,6 +31,8 @@
 -define(RethinkTimeout, 5000).
 -define(ConnectTimeout, 20000).
 
+-record(receiver, {type, from, timeout, tref, maxlen=4294967295}).
+
 %% ------------------------------------------------------------------
 %% API Function Definitions
 %% ------------------------------------------------------------------
@@ -364,6 +366,16 @@ send_recv_null_term(Socket, Packet, Timeout) ->
 handle_query_data(F, RecvBuffer=#{token := undefined},
       <<Token:8/binary, Len:4/little-unsigned-integer-unit:8, Data/binary>>,
                  State) ->
+
+    %% We observed a len decoded as 578486272, which locks up the gen_rethink
+    %% connection because it continuously waits for data to come in to fulfill that
+    %% length. However, it appears that we received bad data from rethinkdb because
+    %% at the time of observations, we didn't issue any queries that would have
+    %% resulted in this much data. We suspect that there was an endianness bug. 
+    %% As a workaround, we offer the maxlen env var, which can be optionally set to
+    %% an upper bound expected for all queries on this instance of rethink-erlang.
+    assert_maxlen(Token, Len, State),
+
     %io:format("query data new token ~p ~p ~p~n", [Token, Len, size(Data)]),
     handle_query_data(F, RecvBuffer#{token => Token,
                                   len => Len,
@@ -479,15 +491,17 @@ register_receiver(Type, Token, From, Timeout, State) ->
                                           {receiver_timeout, Token, TimeoutRef}),
             {TimeoutRef, CancelRef}
     end,
-    add_or_update_receiver(Token, {Type, From, Timeout, TRef}, State).
+    MaxLen = application:get_env(rethink, maxlen, 16#FFFFFFFF),
+    add_or_update_receiver(Token, #receiver{type=Type, from=From,
+                                            timeout=Timeout, tref=TRef, maxlen=MaxLen}, State).
 
 timeout_receiver(Token, TimeoutRef, State=#{receivers := Receivers}) ->
     TimeoutError = {error, timeout},
     case maps:find(Token, Receivers) of
-        {ok, {run, From, _Timeout, {TimeoutRef, _}}} ->
+        {ok, #receiver{type=run, from=From, timeout=_Timeout, tref={TimeoutRef, _}}} ->
             gen_server:reply(From, TimeoutError),
             remove_receiver(Token, State);
-        {ok, {cursor, Cursor, _Timeout, {TimeoutRef, _}}} ->
+        {ok, #receiver{type=cursor, from=Cursor, timeout=_Timeout, tref={TimeoutRef, _}}} ->
             rethink_cursor:update_error(Cursor, TimeoutError),
             remove_receiver(Token, State);
         _ ->
@@ -544,9 +558,9 @@ cancel_timer(_) -> ok.
 notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
     %io:format("notify ~p ~p ~p~n", [Token, Resp, Receivers]),
     UpdatedReceiver = case maps:find(Token, Receivers) of
-        {ok, {run, From, Timeout, TRef}} ->
+        {ok, Receiver=#receiver{type=run, from=From, timeout=Timeout, tref=TRef}} ->
             cancel_timer(TRef),
-            UpdatedReceiver_0 = {run, From, Timeout, undefined},
+            UpdatedReceiver_0 = Receiver#receiver{tref=undefined},
             {Reply, UpdatedReceiver_1} = case expect_query_response(Resp) of
                 {ok, _FullResp=#{<<"t">> := ResponseType,
                        <<"r">> := Result}} ->
@@ -579,9 +593,9 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
             end,
             gen_server:reply(From, Reply),
             UpdatedReceiver_1;
-        {ok, {cursor, Cursor, Timeout, TRef}} ->
+        {ok, Receiver=#receiver{type=cursor, from=Cursor, tref=TRef}} ->
             cancel_timer(TRef),
-            UpdatedReceiver_0 = {cursor, Cursor, Timeout, undefined},
+            UpdatedReceiver_0 = Receiver#receiver{tref=undefined},
             case expect_query_response(Resp) of
                 {ok, #{<<"t">> := ResponseType,
                        <<"r">> := Result}} ->
@@ -619,3 +633,12 @@ filter_tcp_options(TcpOptions) ->
 
 filter_init_options(ConnectionOptions) ->
     maps:with([stats_table], ConnectionOptions).
+
+assert_maxlen(Token, Len, #{receivers := Receivers}) ->
+    case maps:find(Token, Receivers) of
+        {ok, #receiver{maxlen=MaxLen}} when Len > MaxLen ->
+            erlang:error(maxlen_exceeded);
+        _ ->
+            ok
+    end.
+
