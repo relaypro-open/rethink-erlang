@@ -78,7 +78,7 @@ connect(Re, Address, Port, Options, Timeout) ->
         ok ->
             {ok, Re};
         Err ->
-            gen_server:stop(Re),
+            gen_server:stop(Re, normal, ?CallTimeout),
             Err
     end.
 
@@ -147,7 +147,8 @@ feed_cursor(Re, Cursor, Token) ->
                                    token => Token}}).
 
 close(Re) ->
-    try gen_server:cast(Re, {close})
+    try gen_server:cast(Re, {close}),
+        gen_server:stop(Re, normal, ?CallTimeout)
     catch _:_ ->
               ok
     end.

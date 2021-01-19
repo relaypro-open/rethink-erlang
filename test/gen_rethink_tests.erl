@@ -61,7 +61,9 @@ user_test() ->
                                              reql:delete(X)
                                      end),
     gen_rethink:close(Admin),
-    gen_rethink:close(Re2).
+    false = is_process_alive(Admin),
+    gen_rethink:close(Re2),
+    false = is_process_alive(Re2).
 
 session_test() ->
     ets:new(rethink_eunit_stats_table, [public, named_table]),
@@ -79,7 +81,8 @@ session_test() ->
 server_info_test() ->
     {ok, C} = gen_rethink:connect(),
     {ok, _} = gen_rethink:server_info(C),
-    gen_rethink:close(C).
+    gen_rethink:close(C),
+    false = is_process_alive(C).
 
 % unable to test with eunit
 %maxlen_test() ->
