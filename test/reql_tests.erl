@@ -33,6 +33,7 @@ reql_test_() ->
 
               fun() -> {ok, _} = rethink:run1(reql:index_create(reql:table(reql:db(temp_db), my_table), my_index)) end,
               fun() -> {ok, _} = rethink:run1(reql:index_create(reql:table(reql:db(temp_db), my_table2), my_index)) end,
+              fun() -> {ok, _} = rethink:run1(reql:index_create(reql:table(reql:db(temp_db), my_table2), compound_index, [my_index, other_index])) end,
               fun() -> {ok, _} = rethink:run1(reql:index_wait(reql:table(reql:db(temp_db), my_table), my_index)) end,
               fun() -> {ok, _} = rethink:run1(reql:index_wait(reql:table(reql:db(temp_db), my_table))) end,
               fun() -> {ok, _} = rethink:run1(reql:index_wait(reql:table(reql:db(temp_db), my_table2))) end,

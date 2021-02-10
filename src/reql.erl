@@ -183,6 +183,14 @@ var(X) ->
 ?REQL0(index_list).
 ?REQL0(index_status).
 index_create(R, Attr, O) when is_map(O) -> call_cmd(R, index_create, [Attr], O);
+index_create(R, Attr, Compound) when is_list(Compound) ->
+    index_create(R, Attr, fun(X) ->
+                                  %% make clones of input var to avoid chaining func calls
+                                  Clones = [reql:clone(X) || _ <- lists:seq(1, length(Compound)-1)],
+                                  X2 = [X|Clones],
+                                  Zip = lists:zip(X2, Compound),
+                                  [ reql:bracket(A, B) || {A, B} <- Zip ]
+                          end);
 index_create(R, Attr, IndexFunc) -> call_cmd(R, index_create, [Attr, IndexFunc]).
 ?REQL2_O(index_create).
 ?REQL2(index_rename).
@@ -494,6 +502,8 @@ closure(R, Cmd, Opts) ->
 q(R) when is_pid(R) ->
     % refcount is checked when q/1 is called
     gen_server:call(R, {q}, ?CallTimeout);
+q(R) when is_list(R) ->
+    [ q(X) || X <- R];
 q(R) ->
     R.
 
@@ -567,6 +577,10 @@ prepare_query(#reql{cmd=Cmd, args=Args, opts=Opts}) ->
         _ ->
             [ ql2:term_type(wire, Cmd), List, prepare_opts(Opts) ]
     end;
+prepare_query([#reql{}|_]=List) ->
+    %% do not call ql2:datum, because the contents of the array are already
+    %% properly encoded.
+    [ql2:term_type(wire, make_array), [ prepare_query(X) || X <- List ]];
 prepare_query(Fun) when is_function(Fun) ->
     Func = prepare_func(Fun),
     prepare_query(Func);
