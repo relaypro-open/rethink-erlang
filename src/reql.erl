@@ -455,6 +455,8 @@ resolve(R) ->
 
 wire(continue) ->
     rethink:encode([ql2:query_type(wire, continue)]);
+wire(stop) ->
+    rethink:encode([ql2:query_type(wire, stop)]);
 wire(server_info) ->
     rethink:encode([ql2:query_type(wire, server_info)]).
 

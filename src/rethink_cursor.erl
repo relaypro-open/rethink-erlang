@@ -28,10 +28,16 @@ make(Connection, Token,
     Cursor.
 
 update_success(Cursor, ResponseType, Result) ->
-    gen_server:call(Cursor, {update_success, ResponseType, Result}, infinity).
+    try gen_server:call(Cursor, {update_success, ResponseType, Result}, infinity)
+    catch exit:{noproc, _} ->
+              {error, noproc}
+    end.
 
 update_error(Cursor, Err) ->
-    gen_server:call(Cursor, {update_error, Err}, infinity).
+    try gen_server:call(Cursor, {update_error, Err}, infinity)
+    catch exit:{noproc, _} ->
+              {error, noproc}
+    end.
 
 activate(Cursor) ->
     Pid = self(),
@@ -64,8 +70,11 @@ all_flat(Cursor) ->
             Er
     end.
 
-close(_Cursor) ->
-    ok.
+close(Cursor) ->
+    try gen_server:call(Cursor, {close}, infinity)
+    catch exit:{noproc, _} ->
+              ok
+    end.
 
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
@@ -94,6 +103,12 @@ handle_call({activate, Pid}, _From, State=#{receiver := undefined}) ->
     end;
 handle_call({deactivate}, _From, State) ->
     {reply, ok, State#{receiver => undefined}};
+handle_call({close}, _From, State=#{token := Token, connection := Connection}) ->
+    Cursor = self(),
+    ok = gen_rethink:close_cursor(Connection, Cursor, Token),
+    {stop, normal, ok, State};
+handle_call({close}, _From, State) ->
+    {stop, normal, ok, State};
 handle_call({flush}, _From, State=#{waiting_feed := true, results := Results}) ->
     {reply, {ok, Results}, State#{results => []}};
 handle_call({flush}, From, State=#{last_response_type := LastResponseType,
@@ -121,14 +136,20 @@ handle_call({update_success, ResponseType, Result}, _From, State=#{results := Re
     State2 = State#{last_response_type => ResponseType,
                     results => Results ++ [Result],
                     waiting_feed => false},
-    State3 = feed(State2),
-    State4 = notify(State3),
-    {reply, ok, State4};
+    case notify(feed(State2)) of
+        {stop, State3} ->
+            {stop, normal, ok, State3};
+        State3 ->
+            {reply, ok, State3}
+    end;
 handle_call({update_error, Error}, _From, State) ->
-    State2 = State#{error => Error,
-                    waiting_feed => false},
-    State3 = notify(State2),
-    {reply, ok, State3}.
+    case notify(State#{error => Error,
+                    waiting_feed => false}) of
+        {stop , State2} ->
+            {stop, normal, ok, State2};
+        State2 ->
+            {reply, ok, State2}
+    end.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -151,7 +172,7 @@ feed(State=#{connection := Connection,
              timeout := _Timeout,
              waiting_feed := false}) ->
     % Timeout in the state was the original request's timeout, but for
-    % query continuations, specificying a timeout would cause us to miss
+    % query continuations, specifying a timeout would cause us to miss
     % data if the server sends a response after the timeout period. Instead,
     % rely on monitoring the connection process for interruptions
     Cursor = self(),
@@ -169,12 +190,20 @@ notify(State=#{results := Results=[_|_], receiver := Receiver})
     end, Results),
     notify(State#{results => []});
 notify(State=#{results := [], last_response_type := success_sequence,
-              receiver := Receiver}) when Receiver =/= undefined ->
-    Receiver ! done_msg(),
+              receiver := Receiver}) ->
+    if is_pid(Receiver) ->
+           Receiver ! done_msg();
+       true ->
+           ok
+    end,
     {stop, State};
 notify(State=#{error := Error,
-               receiver := Receiver}) when Receiver =/= undefined ->
-    Receiver ! error_msg(Error),
+               receiver := Receiver}) ->
+    if is_pid(Receiver) ->
+           Receiver ! error_msg(Error);
+       true ->
+           ok
+    end,
     {stop, State};
 notify(State) ->
     State.

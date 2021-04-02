@@ -16,6 +16,7 @@
          insert_raw/6,
          run_closure/4,
          feed_cursor/3,
+         close_cursor/3,
          close/1,
          server_info/1]).
 
@@ -144,7 +145,11 @@ insert_raw(Re, Db, Table, Json, Opts, Timeout) ->
 
 feed_cursor(Re, Cursor, Token) ->
     gen_server:cast(Re, {feed_cursor, #{cursor => Cursor,
-                                   token => Token}}).
+                                        token => Token}}).
+
+close_cursor(Re, Cursor, Token) ->
+    gen_server:cast(Re, {close_cursor, #{cursor => Cursor,
+                                         token => Token}}).
 
 close(Re) ->
     try gen_server:cast(Re, {close}),
@@ -309,6 +314,14 @@ handle_call({close}, _From, State=#{socket := Socket}) ->
 handle_cast({feed_cursor, #{cursor := Cursor,
                        token := Token}}, State=#{socket := Socket}) ->
     Query = reql:wire(continue),
+    Size = iolist_size(Query),
+    SizeBin = encode_unsigned(Size, 4, little),
+    Packet = [Token, SizeBin, Query],
+    ok = send_query(Socket, Packet),
+    {noreply, register_receiver(cursor, Token, Cursor, infinity, State)};
+handle_cast({close_cursor, #{cursor := Cursor,
+                             token := Token}}, State=#{socket := Socket}) ->
+    Query = reql:wire(stop),
     Size = iolist_size(Query),
     SizeBin = encode_unsigned(Size, 4, little),
     Packet = [Token, SizeBin, Query],
@@ -610,7 +623,10 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
                             rethink_cursor:update_success(Cursor,
                                                           success_partial,
                                                           Result),
-                            UpdatedReceiver_0
+                            UpdatedReceiver_0;
+                        client_error ->
+                            rethink_cursor:update_error(Cursor, {error, Result}),
+                            undefined
                     end;
                 Err ->
                     rethink_cursor:update_error(Cursor, Err),

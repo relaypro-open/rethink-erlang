@@ -125,18 +125,19 @@ handle_cast(Msg, State=#{module := Module,
 handle_info({'DOWN', MonitorRef, _, _, _}, State=#{monitor_ref := MonitorRef}) ->
     State2 = State#{monitor_ref => undefined,
                     connection => undefined},
-    case exec_handle_connection_down(State2) of
-        {noreply, State3} ->
-            handle_cast({?MODULE, connect}, State3);
-        {stop, Reason, State3} ->
-            {stop, Reason, State3}
+    State3 = close_cursor(State2),
+    case exec_handle_connection_down(State3) of
+        {noreply, State4} ->
+            handle_cast({?MODULE, connect}, State4);
+        {stop, Reason, State4} ->
+            {stop, Reason, State4}
     end;
 handle_info({rethink_cursor, done}, State) ->
-    exec_handle_query_done(State);
+    exec_handle_query_done(maps:without([cursor], State));
 handle_info({rethink_cursor, Result}, State) ->
     exec_handle_query_result(Result, State);
 handle_info({rethink_cursor, error, Error}, State) ->
-    exec_handle_query_error(Error, State);
+    exec_handle_query_error(Error, maps:without([cursor], State));
 handle_info(Info, State=#{module := Module,
                           callbackstate := CallbackState}) ->
     case Module:handle_info(Info, CallbackState) of
@@ -146,13 +147,19 @@ handle_info(Info, State=#{module := Module,
             {stop, Reason, State#{callbackstate => NewState}}
     end.
 
-terminate(Reason, #{module := Module,
+terminate(Reason, State=#{module := Module,
                     monitor_ref := MonitorRef,
                     connection := Connection,
                     callbackstate := CallbackState}) ->
     if MonitorRef =:= undefined -> ok; true -> erlang:demonitor(MonitorRef) end,
-    gen_rethink:close(Connection),
+    _State2 = close_cursor(State),
     Module:terminate(Reason, CallbackState).
+
+close_cursor(State=#{cursor := Cursor}) ->
+    rethink_cursor:close(Cursor),
+    maps:without([cursor], State);
+close_cursor(State) ->
+    State.
 
 code_change(OldVsn, #{module := Module,
                       callbackstate := CallbackState} = State, Extra) ->

@@ -84,6 +84,31 @@ server_info_test() ->
     gen_rethink:close(C),
     false = is_process_alive(C).
 
+cursor_close_test() ->
+    {ok, C} = gen_rethink:connect(),
+
+    gen_rethink:run(C, fun(X) -> reql:db_drop(X, cursor_close_test) end, 1000),
+    {ok, _} = gen_rethink:run(C, fun(X) -> reql:db_create(X, cursor_close_test) end, 1000),
+    {ok, _} = gen_rethink:run(C, fun(X) -> reql:db(X, cursor_close_test), reql:table_create(X, cursor_close_test) end, 1000),
+
+    Reql = reql:db(cursor_close_test),
+    reql:table(Reql, cursor_close_test),
+    Inserter = reql:closure(Reql, insert, #{return_changes => true}),
+    [ {ok, _} = gen_rethink:run_closure(C, Inserter,
+                                        [#{val => X}], 1000) || X <- lists:seq(1, 10) ],
+
+    {ok, Cursor} = gen_rethink:run(C,
+                                   fun(X) ->
+                                           reql:db(X, cursor_close_test),
+                                           reql:table(X, cursor_close_test)
+                                   end, 10000),
+
+    rethink_cursor:close(Cursor),
+
+    false = is_process_alive(Cursor),
+    gen_rethink:close(C),
+    false = is_process_alive(C).
+
 % unable to test with eunit
 %maxlen_test() ->
 %    {ok, C} = gen_rethink:connect_unlinked(),
