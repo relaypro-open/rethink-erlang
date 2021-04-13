@@ -163,7 +163,12 @@ close(Re) ->
 %% ------------------------------------------------------------------
 
 init(InitOptions=#{}) ->
-    {ok, InitOptions#{recv_buffer => #{data => [],
+    RecvBuffer = #{data => <<>>,  %% when token is undefined, data must be a binary.
+                                  %% when token is defined, data can be an iolist or a binary.
+                   token => undefined,
+                   len => 0,
+                   recv_size => 0},
+    {ok, InitOptions#{recv_buffer => #{data => <<>>,
                                        token => undefined,
                                        len => 0,
                                        recv_size => 0},
@@ -377,9 +382,11 @@ send_recv_null_term(Socket, Packet, Timeout) ->
             Er
     end.
 
-handle_query_data(F, RecvBuffer=#{token := undefined},
-      <<RecvToken:8/binary, Len:4/little-unsigned-integer-unit:8, Data/binary>>,
-                 State) ->
+handle_query_data(F, RecvBuffer=#{token := undefined,
+                                  data := TokenData}, RecvData, State) when size(TokenData) + size(RecvData) >= 12 ->
+
+    <<RecvToken:8/binary, Len:4/little-unsigned-integer-unit:8, Data/binary>>
+               = iolist_to_binary([TokenData, RecvData]),
 
     %% We observed a len decoded as 578486272, which locks up the gen_rethink
     %% connection because it continuously waits for data to come in to fulfill that
@@ -388,6 +395,8 @@ handle_query_data(F, RecvBuffer=#{token := undefined},
     %% resulted in this much data. We suspect that there was an endianness bug. 
     %% As a workaround, we offer the maxlen env var, which can be optionally set to
     %% an upper bound expected for all queries on this instance of rethink-erlang.
+    %%
+    %% Note: may not be required any longer after fixing the pre-buffering of the token binary
     assert_maxlen(RecvToken, Len, State),
 
     %io:format("query data new token ~p ~p ~p~n", [RecvToken, Len, size(Data)]),
@@ -431,12 +440,10 @@ handle_query_data(F, RecvBuffer=#{token := _RecvToken,
     end,
     handle_query_data(F, RecvBuffer#{recv_size => RecvSize + SizeAdd,
                                   data => [Data, BufferAdd]}, Remain, State);
-handle_query_data(_F, _, _, State) ->
-    %io:format("query data reset ~p~n", [State]),
-    {#{token => undefined,
-      len => 0,
-      recv_size => 0,
-      data => []}, State}.
+handle_query_data(_F, RecvBuffer=#{token := undefined, data := TokenData}, Data, State) ->
+    %% We received some new data but it's not enough bytes to tell us the token+len yet,
+    %% so we have to buffer the data with an undefined token, and an unknown len
+    {RecvBuffer#{data => iolist_to_binary([TokenData, Data])}, State}.
 
 recv_null_term(Socket, Length, Timeout) ->
     case gen_tcp:recv(Socket, Length, Timeout) of
