@@ -143,13 +143,13 @@ insert_raw(Re, Db, Table, Json, Opts, Timeout) ->
                                        opts => Opts,
                                        timeout => Timeout}}, ?CallTimeout).
 
-feed_cursor(Re, Cursor, Token) ->
+feed_cursor(Re, Cursor, RecvToken) ->
     gen_server:cast(Re, {feed_cursor, #{cursor => Cursor,
-                                        token => Token}}).
+                                        token => RecvToken}}).
 
-close_cursor(Re, Cursor, Token) ->
+close_cursor(Re, Cursor, RecvToken) ->
     gen_server:cast(Re, {close_cursor, #{cursor => Cursor,
-                                         token => Token}}).
+                                         token => RecvToken}}).
 
 close(Re) ->
     try gen_server:cast(Re, {close}),
@@ -168,7 +168,7 @@ init(InitOptions=#{}) ->
                                        len => 0,
                                        recv_size => 0},
                       socket => undefined,
-                      token => 1,
+                      token_idx => 1,
                       receivers => #{}}}.
 
 handle_call({connect, #{address := Address,
@@ -233,10 +233,10 @@ handle_call({connect, #{address := Address,
     end;
 handle_call({run, #{reql := Reql,
                     timeout := Timeout}}, From, State=#{socket := Socket}) ->
-    {Token, State2} = next_token(State),
+    {TokenIdx, State2} = next_token_idx(State),
     Query = reql:wire(start, Reql, #{}),
     Size = iolist_size(Query),
-    TokenBin = encode_unsigned(Token, 8, big),
+    TokenBin = encode_unsigned(TokenIdx, 8, big),
     SizeBin = encode_unsigned(Size, 4, little),
     Packet = [TokenBin, SizeBin, Query],
     ok = send_query(Socket, Packet),
@@ -250,7 +250,7 @@ handle_call({insert_raw, #{db := Db,
     reql:table(Reql, Table),
     DbTableJson = reql:wire_raw(Reql),
 
-    {Token, State2} = next_token(State),
+    {TokenIdx, State2} = next_token_idx(State),
 
     % We need to compute the size of the query we're sending, so we're using
     % a function that will allow us to compute iolist_size on the query bytes
@@ -278,7 +278,7 @@ handle_call({insert_raw, #{db := Db,
     Size = iolist_size(QueryIoListFun(<<>>)) + size(Json),
     QueryIoList = QueryIoListFun(Json),
 
-    TokenBin = encode_unsigned(Token, 8, big),
+    TokenBin = encode_unsigned(TokenIdx, 8, big),
     SizeBin = encode_unsigned(Size, 4, little),
     Packet = [TokenBin, SizeBin, QueryIoList],
     ok = send_query(Socket, Packet),
@@ -286,11 +286,11 @@ handle_call({insert_raw, #{db := Db,
 handle_call({run_closure, #{reql := ReqlClosure,
                               args := Args,
                               timeout := Timeout}}, From, State=#{socket := Socket}) ->
-    {Token, State2} = next_token(State),
+    {TokenIdx, State2} = next_token_idx(State),
     Query = erlang:apply(ReqlClosure, Args),
     Size = iolist_size(Query),
 
-    TokenBin = encode_unsigned(Token, 8, big),
+    TokenBin = encode_unsigned(TokenIdx, 8, big),
     SizeBin = encode_unsigned(Size, 4, little),
     Packet = [TokenBin, SizeBin, Query],
     ok = send_query(Socket, Packet),
@@ -299,10 +299,10 @@ handle_call({reql_wire_query_type, #{query_type := QueryType,
                                      timeout := Timeout}},
                         From,
                        State=#{socket := Socket}) ->
-    {Token, State2} = next_token(State),
+    {TokenIdx, State2} = next_token_idx(State),
     Query = reql:wire(QueryType),
     Size = iolist_size(Query),
-    TokenBin = encode_unsigned(Token, 8, big),
+    TokenBin = encode_unsigned(TokenIdx, 8, big),
     SizeBin = encode_unsigned(Size, 4, little),
     Packet = [TokenBin, SizeBin, Query],
     ok = send_query(Socket, Packet),
@@ -312,21 +312,21 @@ handle_call({close}, _From, State=#{socket := Socket}) ->
     {reply, ok, State#{socket => undefined}}.
 
 handle_cast({feed_cursor, #{cursor := Cursor,
-                       token := Token}}, State=#{socket := Socket}) ->
+                       token := RecvToken}}, State=#{socket := Socket}) when is_binary(RecvToken) ->
     Query = reql:wire(continue),
     Size = iolist_size(Query),
     SizeBin = encode_unsigned(Size, 4, little),
-    Packet = [Token, SizeBin, Query],
+    Packet = [RecvToken, SizeBin, Query],
     ok = send_query(Socket, Packet),
-    {noreply, register_receiver(cursor, Token, Cursor, infinity, State)};
+    {noreply, register_receiver(cursor, RecvToken, Cursor, infinity, State)};
 handle_cast({close_cursor, #{cursor := Cursor,
-                             token := Token}}, State=#{socket := Socket}) ->
+                             token := RecvToken}}, State=#{socket := Socket}) when is_binary(RecvToken) ->
     Query = reql:wire(stop),
     Size = iolist_size(Query),
     SizeBin = encode_unsigned(Size, 4, little),
-    Packet = [Token, SizeBin, Query],
+    Packet = [RecvToken, SizeBin, Query],
     ok = send_query(Socket, Packet),
-    {noreply, register_receiver(cursor, Token, Cursor, infinity, State)};
+    {noreply, register_receiver(cursor, RecvToken, Cursor, infinity, State)};
 handle_cast({close}, State=#{socket := Socket}) ->
     gen_tcp:close(Socket),
     {noreply, State#{socket => undefined}};
@@ -336,8 +336,8 @@ handle_cast(_Msg, State) ->
 handle_info({tcp, Socket, Data}, State=#{socket := Socket,
                                          recv_buffer := RecvBuffer}) ->
     %io:format("recv ~p~n", [Data]),
-    Notifier = fun(Token, _Len, NData, StateIn) ->
-                       notify_receiver(Token, NData, StateIn)
+    Notifier = fun(RecvToken, _Len, NData, StateIn) ->
+                       notify_receiver(RecvToken, NData, StateIn)
                end,
     {NewRecvBuffer, State2} =
         handle_query_data(Notifier, RecvBuffer, Data, State),
@@ -349,8 +349,8 @@ handle_info({tcp_passsive, Socket}, State=#{socket := Socket}) ->
     {noreply, State};
 handle_info({tcp_error, Socket, Reason}, State=#{socket := Socket}) ->
     {stop, Reason, State};
-handle_info({receiver_timeout, Token, TimeoutRef}, State) ->
-    State2 = timeout_receiver(Token, TimeoutRef, State),
+handle_info({receiver_timeout, RecvToken, TimeoutRef}, State) ->
+    State2 = timeout_receiver(RecvToken, TimeoutRef, State),
     {noreply, State2};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -378,7 +378,7 @@ send_recv_null_term(Socket, Packet, Timeout) ->
     end.
 
 handle_query_data(F, RecvBuffer=#{token := undefined},
-      <<Token:8/binary, Len:4/little-unsigned-integer-unit:8, Data/binary>>,
+      <<RecvToken:8/binary, Len:4/little-unsigned-integer-unit:8, Data/binary>>,
                  State) ->
 
     %% We observed a len decoded as 578486272, which locks up the gen_rethink
@@ -388,24 +388,24 @@ handle_query_data(F, RecvBuffer=#{token := undefined},
     %% resulted in this much data. We suspect that there was an endianness bug. 
     %% As a workaround, we offer the maxlen env var, which can be optionally set to
     %% an upper bound expected for all queries on this instance of rethink-erlang.
-    assert_maxlen(Token, Len, State),
+    assert_maxlen(RecvToken, Len, State),
 
-    %io:format("query data new token ~p ~p ~p~n", [Token, Len, size(Data)]),
-    handle_query_data(F, RecvBuffer#{token => Token,
+    %io:format("query data new token ~p ~p ~p~n", [RecvToken, Len, size(Data)]),
+    handle_query_data(F, RecvBuffer#{token => RecvToken,
                                   len => Len,
                                   data => Data,
                                   recv_size => size(Data)}, <<>>,
                      State);
-handle_query_data(F, RecvBuffer=#{token := Token,
+handle_query_data(F, RecvBuffer=#{token := RecvToken,
                                len := Len,
                                recv_size := RecvSize,
                                data := Data}, NewData, State) when Len > 0 andalso
                                                             RecvSize >= Len ->
-    %io:format("query data notify ~p ~p ~p~n", [Token, Len, RecvSize]),
+    %io:format("query data notify ~p ~p ~p~n", [RecvToken, Len, RecvSize]),
     Data2 = iolist_to_binary(Data),
     {NotifyData, Remain} = {binary:part(Data2, {0, Len}),
                             binary:part(Data2, {Len, RecvSize-Len})},
-    State2 = F(Token, Len, NotifyData, State),
+    State2 = F(RecvToken, Len, NotifyData, State),
     NewData2 = iolist_to_binary([Remain, NewData]),
     handle_query_data(F, RecvBuffer#{token => undefined,
                                   len => 0,
@@ -414,12 +414,12 @@ handle_query_data(F, RecvBuffer=#{token := Token,
 handle_query_data(_F, RecvBuffer, <<>>, State) ->
     %io:format("query data no data~n", []),
     {RecvBuffer, State};
-handle_query_data(F, RecvBuffer=#{token := _Token,
+handle_query_data(F, RecvBuffer=#{token := _RecvToken,
                                   len := Len,
                                recv_size := RecvSize,
                                data := Data}, NewData, State) when Len > 0 andalso
                                                             RecvSize < Len ->
-    %io:format("query data incomplete ~p ~p ~p~n", [_Token, Len, RecvSize]),
+    %io:format("query data incomplete ~p ~p ~p~n", [_RecvToken, Len, RecvSize]),
     MaxData = Len - RecvSize,
     SizeNew = size(NewData),
     {SizeAdd, BufferAdd, Remain} = if SizeNew > MaxData ->
@@ -456,12 +456,12 @@ split_packet(<<0:8, Rest/binary>>, L) ->
 split_packet(<<B:8, Rest/binary>>, [H|T]) ->
     split_packet(Rest, [<<H/binary, B>>|T]).
 
-next_token(State=#{token := Token}) ->
-    case Token of
+next_token_idx(State=#{token_idx := TokenIdx}) ->
+    case TokenIdx of
         16#FFFFFFFFFFFFFFFF ->
-            {0, State#{token => 1}};
+            {0, State#{token_idx => 1}};
         _ ->
-            {Token, State#{token => Token+1}}
+            {TokenIdx, State#{token_idx => TokenIdx+1}}
     end.
 
 encode_unsigned(Int, Num, Endian) ->
@@ -491,8 +491,8 @@ expect_query_response(Resp) ->
     %io:format("decoding ~p~n", [Resp]),
     {ok, rethink:decode(Resp)}.
 
-register_receiver(Type, Token, From, Timeout, State) ->
-    %io:format("reg  ~p ~p ~p ~p~n", [Type, Token, From, Timeout]),
+register_receiver(Type, RecvToken, From, Timeout, State) ->
+    %io:format("reg  ~p ~p ~p ~p~n", [Type, RecvToken, From, Timeout]),
     TRef = case Timeout of
         infinity ->
             undefined;
@@ -502,33 +502,33 @@ register_receiver(Type, Token, From, Timeout, State) ->
             % would potentially cancel a future request.
             TimeoutRef = make_ref(),
             CancelRef = erlang:send_after(Timeout, self(),
-                                          {receiver_timeout, Token, TimeoutRef}),
+                                          {receiver_timeout, RecvToken, TimeoutRef}),
             {TimeoutRef, CancelRef}
     end,
     MaxLen = application:get_env(rethink, maxlen, 16#FFFFFFFF),
-    add_or_update_receiver(Token, #receiver{type=Type, from=From,
+    add_or_update_receiver(RecvToken, #receiver{type=Type, from=From,
                                             timeout=Timeout, tref=TRef, maxlen=MaxLen}, State).
 
-timeout_receiver(Token, TimeoutRef, State=#{receivers := Receivers}) ->
+timeout_receiver(RecvToken, TimeoutRef, State=#{receivers := Receivers}) ->
     TimeoutError = {error, timeout},
-    case maps:find(Token, Receivers) of
+    case maps:find(RecvToken, Receivers) of
         {ok, #receiver{type=run, from=From, timeout=_Timeout, tref={TimeoutRef, _}}} ->
             gen_server:reply(From, TimeoutError),
-            remove_receiver(Token, State);
+            remove_receiver(RecvToken, State);
         {ok, #receiver{type=cursor, from=Cursor, timeout=_Timeout, tref={TimeoutRef, _}}} ->
             rethink_cursor:update_error(Cursor, TimeoutError),
-            remove_receiver(Token, State);
+            remove_receiver(RecvToken, State);
         _ ->
             State
     end.
 
-add_or_update_receiver(Token, Receiver, State=#{receivers := Receivers}) ->
-    track_waiting_token(Token, State),
-    State#{receivers => Receivers#{ Token => Receiver }}.
+add_or_update_receiver(RecvToken, Receiver, State=#{receivers := Receivers}) ->
+    track_waiting_token(RecvToken, State),
+    State#{receivers => Receivers#{ RecvToken => Receiver }}.
 
-remove_receiver(Token, State=#{receivers := Receivers}) ->
-    track_completed_token(Token, State),
-    State#{receivers => maps:remove(Token, Receivers)}.
+remove_receiver(RecvToken, State=#{receivers := Receivers}) ->
+    track_completed_token(RecvToken, State),
+    State#{receivers => maps:remove(RecvToken, Receivers)}.
 
 track_new_connection(#{stats_table := StatsTable}) ->
     %% Updating stats with 0 initializes the pid with 'ok' status
@@ -536,9 +536,9 @@ track_new_connection(#{stats_table := StatsTable}) ->
 track_new_connection(_) ->
     ok.
 
-track_waiting_token(Token, #{stats_table := StatsTable,
+track_waiting_token(RecvToken, #{stats_table := StatsTable,
                              receivers := Receivers}) ->
-    case maps:find(Token, Receivers) of
+    case maps:find(RecvToken, Receivers) of
         {ok, _} ->
             %% already tracked
             ok;
@@ -548,9 +548,9 @@ track_waiting_token(Token, #{stats_table := StatsTable,
 track_waiting_token(_, _) ->
     ok.
 
-track_completed_token(Token, #{stats_table := StatsTable,
+track_completed_token(RecvToken, #{stats_table := StatsTable,
                                receivers := Receivers}) ->
-    case maps:find(Token, Receivers) of
+    case maps:find(RecvToken, Receivers) of
         {ok, _} ->
             update_stats(waiting, -1, StatsTable),
             update_stats(completed, 1, StatsTable);
@@ -569,9 +569,9 @@ stats_pos(completed) -> 4.
 cancel_timer({_, CancelRef}) -> erlang:cancel_timer(CancelRef);
 cancel_timer(_) -> ok.
 
-notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
-    %io:format("notify ~p ~p ~p~n", [Token, Resp, Receivers]),
-    UpdatedReceiver = case maps:find(Token, Receivers) of
+notify_receiver(RecvToken, Resp, State=#{receivers := Receivers}) ->
+    %io:format("notify ~p ~p ~p~n", [RecvToken, Resp, Receivers]),
+    UpdatedReceiver = case maps:find(RecvToken, Receivers) of
         {ok, Receiver=#receiver{type=run, from=From, timeout=Timeout, tref=TRef}} ->
             cancel_timer(TRef),
             UpdatedReceiver_0 = Receiver#receiver{tref=undefined},
@@ -583,12 +583,12 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
                             {{ok, hd(Result)},
                              undefined};
                         success_sequence ->
-                            {{ok, rethink_cursor:make(self(), Token,
+                            {{ok, rethink_cursor:make(self(), RecvToken,
                                                      success_sequence, Result,
                                                      Timeout)},
                              undefined};
                         success_partial ->
-                            {{ok, rethink_cursor:make(self(), Token,
+                            {{ok, rethink_cursor:make(self(), RecvToken,
                                                      success_partial, Result,
                                                      Timeout)},
                              UpdatedReceiver_0};
@@ -637,9 +637,9 @@ notify_receiver(Token, Resp, State=#{receivers := Receivers}) ->
     end,
     case UpdatedReceiver of
         undefined ->
-            remove_receiver(Token, State);
+            remove_receiver(RecvToken, State);
         _ ->
-            add_or_update_receiver(Token, UpdatedReceiver, State)
+            add_or_update_receiver(RecvToken, UpdatedReceiver, State)
     end.
 
 filter_tcp_options(TcpOptions) ->
@@ -651,11 +651,20 @@ filter_tcp_options(TcpOptions) ->
 filter_init_options(ConnectionOptions) ->
     maps:with([stats_table], ConnectionOptions).
 
-assert_maxlen(Token, Len, #{receivers := Receivers}) ->
-    case maps:find(Token, Receivers) of
+assert_maxlen(RecvToken, Len, #{receivers := Receivers}) ->
+    case maps:find(RecvToken, Receivers) of
         {ok, #receiver{maxlen=MaxLen}} when Len > MaxLen ->
             erlang:error(maxlen_exceeded);
         _ ->
-            ok
+            %% There is no receiver registered for this token.
+            %% Ideally we would want our buffer to collect this
+            %% response and then discard is quietly, but we also
+            %% need to protect against the maxlen bug from rethink
+            MaxLen = application:get_env(rethink, maxlen, 16#FFFFFFFF),
+            if Len > MaxLen ->
+                   erlang:error(maxlen_exceeded);
+               true ->
+                   ok
+            end
     end.
 
