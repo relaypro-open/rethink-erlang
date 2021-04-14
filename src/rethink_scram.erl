@@ -66,7 +66,7 @@ r_int(1) ->
     <<0,0,0,1>>.
 
 r_hmac(Key, Data) ->
-    crypto:hmac(sha256, Key, Data).
+    crypto:mac(hmac, sha256, Key, Data).
 
 r_h(X) ->
     crypto:hash(sha256, X).

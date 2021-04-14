@@ -168,10 +168,7 @@ init(InitOptions=#{}) ->
                    token => undefined,
                    len => 0,
                    recv_size => 0},
-    {ok, InitOptions#{recv_buffer => #{data => <<>>,
-                                       token => undefined,
-                                       len => 0,
-                                       recv_size => 0},
+    {ok, InitOptions#{recv_buffer => RecvBuffer,
                       socket => undefined,
                       token_idx => 1,
                       receivers => #{}}}.
