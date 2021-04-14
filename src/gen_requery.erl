@@ -109,10 +109,11 @@ handle_cast({?MODULE, reconnect, N}, State=#{connect_options := ConnectOptions})
     spawn_connect(N, ConnectOptions),
     {noreply, State};
 handle_cast({?MODULE, bind_connection, Connection}, State) ->
+    State2 = close_connection(State),
     MonitorRef = erlang:monitor(process, Connection),
-    State2 = State#{monitor_ref => MonitorRef,
+    State3 = State2#{monitor_ref => MonitorRef,
                      connection => Connection},
-    exec_handle_connection_up(State2);
+    exec_handle_connection_up(State3);
 handle_cast(Msg, State=#{module := Module,
                           callbackstate := CallbackState}) ->
     case Module:handle_cast(Msg, CallbackState) of
@@ -149,16 +150,22 @@ handle_info(Info, State=#{module := Module,
 
 terminate(Reason, State=#{module := Module,
                     monitor_ref := MonitorRef,
-                    connection := Connection,
                     callbackstate := CallbackState}) ->
     if MonitorRef =:= undefined -> ok; true -> erlang:demonitor(MonitorRef) end,
-    _State2 = close_cursor(State),
+    State2 = close_cursor(State),
+    _State3 = close_connection(State2),
     Module:terminate(Reason, CallbackState).
 
 close_cursor(State=#{cursor := Cursor}) ->
     rethink_cursor:close(Cursor),
     maps:without([cursor], State);
 close_cursor(State) ->
+    State.
+
+close_connection(State=#{connection := Connection}) when Connection =/= undefined ->
+    gen_rethink:close(Connection),
+    State#{connection => undefined};
+close_connection(State) ->
     State.
 
 code_change(OldVsn, #{module := Module,
