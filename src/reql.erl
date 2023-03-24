@@ -379,7 +379,7 @@ time(R, Y, M, D, H, Mi, S, TZ) -> call_cmd(R, time, [Y, M, D, H, Mi, S, TZ]).
 ?REQL0(to_epoch_time).
 
 % Control structures
-args(X) -> X.
+args(X) -> {args, X}.
 binary(X) -> {binary, X}.
 iso8601(X) -> {iso8601, X}.
 do(Fun) -> do([], Fun).
@@ -451,7 +451,12 @@ release(R) -> gen_server:call(R, {refcount, -1}, ?CallTimeout).
 
 %% resolve reql pid as a query into rethinkdb
 resolve(R) ->
-    prepare_query(q(R)).
+    case prepare_query(q(R)) of
+        {flatten, Args} ->
+            Args;
+        X ->
+            X
+    end.
 
 wire(continue) ->
     rethink:encode([ql2:query_type(wire, continue)]);
@@ -572,7 +577,7 @@ prepare_query(#reql{cmd=do, args=[Args, Fun], opts=Opts}) when is_function(Fun) 
     Result = prepare_query(FunCall),
     Result;
 prepare_query(#reql{cmd=Cmd, args=Args, opts=Opts}) ->
-    List = [ prepare_query(X) || X <- Args ],
+    List = prepare_query_list(Args),
     case Opts of
         undefined ->
             [ ql2:term_type(wire, Cmd), List ];
@@ -582,12 +587,28 @@ prepare_query(#reql{cmd=Cmd, args=Args, opts=Opts}) ->
 prepare_query([#reql{}|_]=List) ->
     %% do not call ql2:datum, because the contents of the array are already
     %% properly encoded.
-    [ql2:term_type(wire, make_array), [ prepare_query(X) || X <- List ]];
+    [ql2:term_type(wire, make_array), prepare_query_list(List)];
 prepare_query(Fun) when is_function(Fun) ->
     Func = prepare_func(Fun),
     prepare_query(Func);
+prepare_query({args, Args}) ->
+    {flatten, prepare_query_list(Args)};
 prepare_query(X) ->
     ql2:datum(X).
+
+prepare_query_list(List) ->
+    % special handling required for lists of elements. If there is an element X wrapped
+    % with {args, X} then it must be flattened into the list being computed. This is to
+    % support functions with variable length arguments, which Erlang does not support
+    lists:reverse(lists:foldl(
+                    fun(X, ListAcc) ->
+                            case prepare_query(X) of
+                                {flatten, VariableArgs} ->
+                                    lists:reverse(VariableArgs) ++ ListAcc;
+                                PrepX ->
+                                    [PrepX|ListAcc]
+                            end
+                    end, [], List)).
 
 prepare_opts(undefined) -> undefined;
 prepare_opts(Map) when is_map(Map) ->

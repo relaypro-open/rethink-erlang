@@ -70,7 +70,7 @@ session_test() ->
     {ok, Session} = gen_rethink_session:start_link(#{stats_table => rethink_eunit_stats_table}),
 
     %% test load balancing
-    {error, timeout} = try rethink_session_stats:await_connections(rethink_eunit_stats_table, 1) catch A:B -> {A, B} end,
+    {error, timeout} = try rethink_session_stats:await_connections(rethink_eunit_stats_table, 0) catch A:B -> {A, B} end,
     [_] = rethink_session_stats:await_connections(rethink_eunit_stats_table, 1000),
 
     {ok, Re} = gen_rethink_session:get_connection(Session),
