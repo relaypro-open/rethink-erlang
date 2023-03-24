@@ -59,6 +59,17 @@ reql_test_() ->
               fun() -> {ok, _} = rethink:run1(
                                    fun(R) ->
                                        reql:db(R, temp_db),
+                                       reql:table(R, my_table),
+                                       reql:insert(R, #{ name => <<"jms2">>,
+                                                         nest => #{
+                                                           timestamp => ?Now,
+                                                           blob => reql:binary(?Binary),
+                                                           list => ?List},
+                                                         my_index => 2})
+                                   end) end,
+              fun() -> {ok, _} = rethink:run1(
+                                   fun(R) ->
+                                       reql:db(R, temp_db),
                                        reql:table(R, my_table2),
                                        reql:insert(R, #{ name => <<"jms2">>,
                                                          nest => #{
@@ -89,7 +100,7 @@ reql_test_() ->
                       reql:table(Union2, my_table2),
                       reql:union(Union1, Union2),
                       {ok, Results} = rethink:run1(Union1),
-                      2 = length(Results),
+                      3 = length(Results),
                       false = is_process_alive(Union1),
                       false = is_process_alive(Union2)
               end,
@@ -192,6 +203,28 @@ reql_test_() ->
                       {ok, #{<<"replaced">> := 1}} = CasFun(),
                       {ok, #{<<"errors">> := 1, <<"first_error">> := <<"held">>}} = CasFun(),
                       gen_rethink:close(C)
+              end,
+
+              % Get multiple
+              fun() ->
+                      GetPKs = reql:db(temp_db),
+                      reql:table(GetPKs, my_table),
+                      {ok, Objs} = rethink:run1(GetPKs),
+                      Ids = [ Id || #{<<"id">> := Id} <- Objs ],
+
+                      MyIndexes = [ Index || #{<<"my_index">> := Index} <- Objs ],
+
+                      GetAllList = reql:db(temp_db),
+                      reql:table(GetAllList, my_table),
+                      reql:get_all(GetAllList, reql:args(Ids)),
+                      {ok, Objs2} = rethink:run1(GetAllList),
+                      true = length(Objs2) == length(Ids),
+
+                      GetAllListIndex = reql:db(temp_db),
+                      reql:table(GetAllListIndex, my_table),
+                      reql:get_all(GetAllListIndex, reql:args(MyIndexes), #{index => <<"my_index">>}),
+                      {ok, Objs3} = rethink:run1(GetAllListIndex),
+                      true = length(Objs3) == length(MyIndexes)
               end
 
              ]
