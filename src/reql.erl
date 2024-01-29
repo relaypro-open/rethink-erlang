@@ -48,7 +48,7 @@
          set_insert/2, set_union/2, set_intersection/2, set_difference/2,
          bracket/2, get_field/2, has_fields/2, has_fields/3, has_fields/4,
          insert_at/3, splice_at/3, delete_at/2, delete_at/3, change_at/3,
-         keys/1, values/1, literal/2, object/2]).
+         keys/1, values/1, literal/1, object/2]).
 
 % String manipulation
 -export([match/2, split/1, split/2, split/3, upcase/1, downcase/1]).
@@ -254,6 +254,7 @@ db(DB) ->
 ?REQL1(sample).
 desc(X) -> {desc, X}.
 asc(X) -> {asc, X}.
+literal(X) -> {literal, X}.
 
 % Aggregation
 ?REQL1(group).
@@ -308,7 +309,6 @@ asc(X) -> {asc, X}.
 ?REQL2(change_at).
 ?REQL0(keys).
 ?REQL0(values).
-?REQL1(literal).
 ?REQL1_LIST(object).
 
 % String manipulation

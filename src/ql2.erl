@@ -30,6 +30,8 @@ datum({desc, X}) ->
     [ql2:term_type(wire, desc), [X]];
 datum({asc, X}) ->
     [ql2:term_type(wire, asc), [X]];
+datum({literal, X}) ->
+    [ql2:term_type(wire, literal), [X]];
 datum(Pid) when is_pid(Pid) ->
     reql:resolve(Pid);
 datum({binary, Blob}) ->
