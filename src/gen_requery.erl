@@ -13,7 +13,7 @@
 -type(state() :: any()).
 -type(reql() :: pid() | undefined).
 
--callback init(Args :: list()) ->
+-callback init(Args :: any()) ->
     {ok, ConnectOptions ::  map(), State :: state()} |
     {stop, Reason :: any()} |
     ignore.
